@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -182,30 +184,14 @@ def score_with_llm(candidates: list[dict], dry_run: bool = False) -> list[dict]:
         "- feasibility: How practical is it to implement as a Claude skill?\n"
         "- trading_value: How useful is this for equity traders/investors?\n\n"
         "Candidates:\n" + "\n".join(candidate_descriptions) + "\n\n"
-        "Return scores for ALL candidates."
+        "Return scores for ALL candidates as a single JSON object. "
+        "Do NOT use markdown or natural language. Output ONLY valid JSON.\n"
+        "Required format:\n"
+        '{"candidates": [{"id": "...", "novelty": 0, "feasibility": 0, "trading_value": 0}]}'
     )
 
-    schema = json.dumps(
-        {
-            "type": "object",
-            "properties": {
-                "candidates": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string"},
-                            "novelty": {"type": "integer", "minimum": 0, "maximum": 100},
-                            "feasibility": {"type": "integer", "minimum": 0, "maximum": 100},
-                            "trading_value": {"type": "integer", "minimum": 0, "maximum": 100},
-                        },
-                        "required": ["id", "novelty", "feasibility", "trading_value"],
-                    },
-                },
-            },
-            "required": ["candidates"],
-        }
-    )
+    # Remove CLAUDECODE env var to allow claude -p from within Claude Code terminals
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
     try:
         result = subprocess.run(
@@ -214,10 +200,8 @@ def score_with_llm(candidates: list[dict], dry_run: bool = False) -> list[dict]:
                 "-p",
                 "--output-format",
                 "json",
-                "--json-schema",
-                schema,
                 "--max-turns",
-                "1",
+                "3",
                 f"--max-budget-usd={CLAUDE_BUDGET_SCORE}",
             ],
             input=prompt,
@@ -225,6 +209,7 @@ def score_with_llm(candidates: list[dict], dry_run: bool = False) -> list[dict]:
             text=True,
             check=False,
             timeout=CLAUDE_TIMEOUT,
+            env=env,
         )
 
         if result.returncode != 0:
@@ -238,9 +223,9 @@ def score_with_llm(candidates: list[dict], dry_run: bool = False) -> list[dict]:
                 }
             return candidates
 
-        parsed = _extract_json_from_claude(result.stdout)
+        parsed = _extract_json_from_claude(result.stdout, ["scores", "candidates"])
         if parsed and "candidates" in parsed:
-            score_map = {s["id"]: s for s in parsed["candidates"]}
+            score_map = {s.get("id", ""): s for s in parsed.get("candidates", [])}
             for c in scorable:
                 cid = c.get("id", "")
                 if cid in score_map:
@@ -283,8 +268,12 @@ def score_with_llm(candidates: list[dict], dry_run: bool = False) -> list[dict]:
     return candidates
 
 
-def _extract_json_from_claude(output: str) -> dict | None:
-    """Extract JSON from claude CLI output, looking for 'scores' or 'candidates' key."""
+def _extract_json_from_claude(output: str, required_keys: list[str]) -> dict | None:
+    """Extract JSON from claude CLI --output-format json envelope.
+
+    Unwraps the envelope (result or content[].text), then scans for
+    the first JSON object containing any of the required_keys.
+    """
     # Try parsing the wrapper envelope first
     try:
         wrapper = json.loads(output)
@@ -311,7 +300,7 @@ def _extract_json_from_claude(output: str) -> dict | None:
             break
         try:
             obj, end_idx = decoder.raw_decode(text, pos)
-            if isinstance(obj, dict) and ("scores" in obj or "candidates" in obj):
+            if isinstance(obj, dict) and any(k in obj for k in required_keys):
                 return obj
             idx = pos + 1
         except json.JSONDecodeError:
@@ -370,17 +359,18 @@ def merge_into_backlog(backlog: dict, scored_candidates: list[dict]) -> dict:
 
 
 def save_backlog(backlog_path: Path, backlog: dict) -> None:
-    """Save backlog to YAML, creating a .bak backup first."""
+    """Save backlog to YAML atomically via tempfile + os.replace."""
     backlog_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if backlog_path.exists():
-        bak_path = backlog_path.with_suffix(".yaml.bak")
-        shutil.copy2(backlog_path, bak_path)
-
-    backlog_path.write_text(
-        yaml.safe_dump(backlog, default_flow_style=False, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
+    content = yaml.safe_dump(backlog, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    fd, tmp_path = tempfile.mkstemp(dir=backlog_path.parent, suffix=".tmp", prefix=".backlog_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, backlog_path)
+    except BaseException:
+        os.unlink(tmp_path)
+        raise
     logger.info("Backlog saved to %s (%d ideas).", backlog_path, len(backlog.get("ideas", [])))
 
 

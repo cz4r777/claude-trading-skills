@@ -10,6 +10,9 @@
 #   launchctl start com.trade-analysis.skill-generation-weekly
 #   # or: bash scripts/run_skill_generation.sh --mode weekly --dry-run
 
+# Allow claude -p subprocess calls even when launched from a Claude Code terminal
+unset CLAUDECODE
+
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:${HOME}/.local/bin:/usr/local/bin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}/.." || exit 1

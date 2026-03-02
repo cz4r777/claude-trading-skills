@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -26,6 +27,14 @@ CLAUDE_TIMEOUT = 600
 CLAUDE_BUDGET_MINE = 1.00
 LOOKBACK_DAYS = 7
 MAX_USER_MESSAGES_PER_SESSION = 5
+MAX_ERROR_OUTPUT_LEN = 500
+
+AUTOMATED_PROMPT_PREFIXES = [
+    "# LLM Skill Review Request",
+    "Improve the skill '",
+    "Implement the following plan:",
+    "Score each skill idea candidate",
+]
 
 
 # ── Project discovery ──
@@ -57,7 +66,7 @@ def find_project_dirs(
         for proj in allowlist:
             # Project name may itself contain dashes, so check if the dir name
             # ends with the project name (after the path encoding).
-            if child.name.endswith(proj):
+            if child.name.endswith(f"-{proj}") or child.name == proj:
                 matches.append((proj, child))
                 break
 
@@ -109,6 +118,7 @@ def parse_session(log_path: Path) -> dict:
     user_messages: list[str] = []
     tool_uses: list[dict] = []
     timestamps: list[str] = []
+    timed_entries: list[dict] = []
 
     try:
         text = log_path.read_text(encoding="utf-8")
@@ -138,14 +148,18 @@ def parse_session(log_path: Path) -> dict:
         msg = entry.get("message", {})
         if not isinstance(msg, dict):
             continue
-        entry_type = msg.get("type") or entry.get("type", "")
+        entry_type = entry.get("type") or msg.get("type", "")
 
-        # Skip sidechain messages
+        # Skip sidechain messages (before timed_entries to avoid contamination)
         if entry.get("isSidechain") or msg.get("isSidechain"):
             continue
 
+        # Track timed entries for unresolved request detection
+        if ts and entry_type:
+            timed_entries.append({"timestamp": ts, "type": entry_type})
+
         # User messages
-        if entry_type == "user":
+        if entry_type == "user" or msg.get("role") == "user":
             user_type = entry.get("userType") or msg.get("userType", "")
             if user_type != "external":
                 continue
@@ -162,7 +176,7 @@ def parse_session(log_path: Path) -> dict:
                             user_messages.append(text_val)
 
         # Assistant messages → extract tool_use blocks
-        elif entry_type == "assistant":
+        elif entry_type == "assistant" or msg.get("role") == "assistant":
             content = msg.get("content", [])
             if isinstance(content, list):
                 for block in content:
@@ -179,10 +193,11 @@ def parse_session(log_path: Path) -> dict:
             content = msg.get("content", "")
             is_error = entry.get("is_error") or msg.get("is_error", False)
             if is_error:
+                raw = content if isinstance(content, str) else str(content)
                 tool_uses.append(
                     {
                         "name": "__tool_result_error__",
-                        "output": content if isinstance(content, str) else str(content),
+                        "output": raw[:MAX_ERROR_OUTPUT_LEN],
                     }
                 )
             elif isinstance(content, str):
@@ -191,7 +206,7 @@ def parse_session(log_path: Path) -> dict:
                     tool_uses.append(
                         {
                             "name": "__tool_result_error__",
-                            "output": content,
+                            "output": content[:MAX_ERROR_OUTPUT_LEN],
                         }
                     )
 
@@ -199,6 +214,7 @@ def parse_session(log_path: Path) -> dict:
         "user_messages": user_messages,
         "tool_uses": tool_uses,
         "timestamps": timestamps,
+        "timed_entries": timed_entries,
     }
 
 
@@ -234,14 +250,13 @@ def detect_signals(parsed: dict) -> dict:
     """
     user_messages = parsed.get("user_messages", [])
     tool_uses = parsed.get("tool_uses", [])
-    timestamps = parsed.get("timestamps", [])
 
     signals: dict = {
         "skill_usage": _detect_skill_usage(tool_uses),
         "errors": _detect_errors(tool_uses),
         "repetitive_patterns": _detect_repetitive_patterns(tool_uses),
         "automation_requests": _detect_automation_requests(user_messages),
-        "unresolved_requests": _detect_unresolved_requests(timestamps, tool_uses),
+        "unresolved_requests": _detect_unresolved_requests(parsed.get("timed_entries", [])),
     }
 
     return signals
@@ -300,8 +315,21 @@ def _detect_repetitive_patterns(tool_uses: list[dict]) -> dict:
     return {"count": len(repeated), "patterns": list(repeated.keys())}
 
 
+def _is_automated_prompt(msg: str) -> bool:
+    """Check if a message is an automated Claude -p prompt (not a real user request)."""
+    stripped = msg.strip()
+    for prefix in AUTOMATED_PROMPT_PREFIXES:
+        if stripped.startswith(prefix):
+            return True
+    return False
+
+
 def _detect_automation_requests(user_messages: list[str]) -> dict:
-    """Detect automation-related keywords in user messages."""
+    """Detect automation-related keywords in user messages.
+
+    Excludes automated prompts from Claude -p invocations (e.g., skill
+    improvement loop, scoring pipelines) to avoid false positives.
+    """
     keywords = [
         "skill",
         "create",
@@ -316,6 +344,8 @@ def _detect_automation_requests(user_messages: list[str]) -> dict:
     matches: list[str] = []
 
     for msg in user_messages:
+        if _is_automated_prompt(msg):
+            continue
         msg_lower = msg.lower()
         for kw in keywords:
             if kw.lower() in msg_lower:
@@ -326,35 +356,60 @@ def _detect_automation_requests(user_messages: list[str]) -> dict:
     return {"count": len(matches), "samples": matches}
 
 
-def _detect_unresolved_requests(timestamps: list[str], tool_uses: list[dict]) -> dict:
-    """Detect user messages followed by 5+ minutes without tool_use.
+_RESPONSE_TYPES = {"assistant", "tool_result", "tool_use"}
 
-    This is a heuristic: if there's a large gap between timestamps and
-    no tool_use entries in that gap, the request may have been unresolved.
+
+def _detect_unresolved_requests(timed_entries: list[dict]) -> dict:
+    """Detect user messages followed by 5+ minutes without assistant response.
+
+    Only ``assistant``, ``tool_result``, and ``tool_use`` entries count as
+    a real response.  System/progress/queue-operation entries are ignored.
     """
-    if len(timestamps) < 2:
+    if len(timed_entries) < 2:
         return {"count": 0}
 
     gap_count = 0
-    for i in range(len(timestamps) - 1):
-        try:
-            t1 = _parse_timestamp(timestamps[i])
-            t2 = _parse_timestamp(timestamps[i + 1])
-            if t1 is None or t2 is None:
+    for i, entry in enumerate(timed_entries):
+        if entry.get("type") != "user":
+            continue
+        t1 = _parse_timestamp(entry.get("timestamp", ""))
+        if t1 is None:
+            continue
+        # Find the next response entry (assistant/tool_use/tool_result)
+        responded = False
+        found_response = False
+        for j in range(i + 1, len(timed_entries)):
+            next_entry = timed_entries[j]
+            if next_entry.get("type") not in _RESPONSE_TYPES:
+                continue  # Skip user, system, progress, etc.
+            found_response = True
+            t2 = _parse_timestamp(next_entry.get("timestamp", ""))
+            if t2 is None:
                 continue
             diff = (t2 - t1).total_seconds()
-            if diff >= 300:  # 5 minutes
-                gap_count += 1
-        except (ValueError, TypeError):
-            continue
+            if diff < 300:  # Response within 5 minutes
+                responded = True
+            break  # Found the next response entry
+        if not found_response:
+            continue  # End of session or no real response — not unresolved
+        if not responded:
+            gap_count += 1
 
     return {"count": gap_count}
 
 
 def _parse_timestamp(ts: str) -> datetime | None:
-    """Parse ISO format timestamp string."""
+    """Parse ISO format timestamp string, normalizing to UTC-aware.
+
+    Handles the ``Z`` suffix that Python 3.10's fromisoformat() rejects.
+    """
     try:
-        return datetime.fromisoformat(ts)
+        if ts.endswith("Z"):
+            ts = ts[:-1] + "+00:00"
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except (ValueError, TypeError):
         return None
 
@@ -382,35 +437,8 @@ def abstract_with_llm(
     # Build prompt
     prompt = _build_llm_prompt(signals, user_samples, project_name)
 
-    # JSON schema for structured output
-    schema = json.dumps(
-        {
-            "type": "object",
-            "properties": {
-                "candidates": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "description": {"type": "string"},
-                            "rationale": {"type": "string"},
-                            "priority": {
-                                "type": "string",
-                                "enum": ["high", "medium", "low"],
-                            },
-                            "signals_used": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            },
-                        },
-                        "required": ["name", "description", "rationale", "priority"],
-                    },
-                },
-            },
-            "required": ["candidates"],
-        }
-    )
+    # Remove CLAUDECODE env var to allow claude -p from within Claude Code terminals
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
     try:
         result = subprocess.run(
@@ -419,10 +447,8 @@ def abstract_with_llm(
                 "-p",
                 "--output-format",
                 "json",
-                "--json-schema",
-                schema,
                 "--max-turns",
-                "1",
+                "3",
                 f"--max-budget-usd={CLAUDE_BUDGET_MINE}",
             ],
             input=prompt,
@@ -430,17 +456,24 @@ def abstract_with_llm(
             text=True,
             check=False,
             timeout=CLAUDE_TIMEOUT,
+            env=env,
         )
 
         if result.returncode != 0:
             logger.warning("claude -p failed: %s", result.stderr.strip()[:200])
             return None
 
-        response = _extract_json_from_claude(result.stdout)
+        logger.debug("claude -p stdout (%d chars): %.500s", len(result.stdout), result.stdout)
+
+        response = _extract_json_from_claude(result.stdout, ["candidates"])
         if response and "candidates" in response:
             return response["candidates"]
 
-        logger.warning("Could not parse LLM candidates JSON.")
+        logger.warning(
+            "Could not parse LLM candidates JSON. stdout (%d chars): %.300s",
+            len(result.stdout),
+            result.stdout,
+        )
         return None
 
     except subprocess.TimeoutExpired:
@@ -483,18 +516,22 @@ def _build_llm_prompt(signals: dict, user_samples: list[str], project_name: str)
             parts.append(f"- {sample[:200]}")
 
     parts.append(
-        "\n\nReturn 1-5 skill idea candidates as JSON. "
-        "Each candidate should have: name, description, rationale, priority, signals_used."
+        "\n\nReturn 1-5 skill idea candidates as a single JSON object. "
+        "Do NOT use markdown or natural language. Output ONLY valid JSON.\n"
+        "Required format:\n"
+        '{"candidates": [{"title": "...", "description": "...", "category": "...", '
+        '"rationale": "...", "priority": "high|medium|low", '
+        '"signals_used": ["..."]}]}'
     )
 
     return "\n".join(parts)
 
 
-def _extract_json_from_claude(output: str) -> dict | None:
-    """Extract candidates JSON from claude CLI output.
+def _extract_json_from_claude(output: str, required_keys: list[str]) -> dict | None:
+    """Extract JSON from claude CLI --output-format json envelope.
 
-    Same pattern as run_skill_improvement_loop.py but looks for
-    "candidates" key instead of "score".
+    Unwraps the envelope (result or content[].text), then scans for
+    the first JSON object containing any of the required_keys.
     """
     # claude --output-format json wraps response; try to extract inner JSON
     try:
@@ -522,12 +559,33 @@ def _extract_json_from_claude(output: str) -> dict | None:
             break
         try:
             obj, end_idx = decoder.raw_decode(text, pos)
-            if isinstance(obj, dict) and "candidates" in obj:
+            if isinstance(obj, dict) and any(k in obj for k in required_keys):
                 return obj
             idx = pos + 1
         except json.JSONDecodeError:
             idx = pos + 1
     return None
+
+
+# ── Output helpers ──
+
+
+def _write_empty_output(output_dir: Path, lookback_days: int) -> None:
+    """Write an empty raw_candidates.yaml when there are no sessions to process."""
+    output = {
+        "generated_at_utc": datetime.now(tz=timezone.utc).isoformat(),
+        "lookback_days": lookback_days,
+        "sessions_analyzed": 0,
+        "aggregated_signals": {},
+        "session_details": [],
+        "candidates": [],
+    }
+    output_path = output_dir / "raw_candidates.yaml"
+    output_path.write_text(
+        yaml.safe_dump(output, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    logger.info("Wrote empty raw candidates to %s", output_path)
 
 
 # ── Main entry point ──
@@ -551,6 +609,7 @@ def run(args: argparse.Namespace) -> int:
     project_dirs = find_project_dirs(claude_dir, allowlist)
     if not project_dirs:
         logger.warning("No matching project directories found in %s", claude_dir)
+        _write_empty_output(output_dir, args.lookback_days)
         return 0
 
     logger.info("Found %d project directories.", len(project_dirs))
@@ -559,6 +618,7 @@ def run(args: argparse.Namespace) -> int:
     session_logs = list_session_logs(project_dirs, lookback_days=args.lookback_days)
     if not session_logs:
         logger.info("No recent session logs found (lookback=%d days).", args.lookback_days)
+        _write_empty_output(output_dir, args.lookback_days)
         return 0
 
     logger.info("Found %d session logs.", len(session_logs))
@@ -604,8 +664,15 @@ def run(args: argparse.Namespace) -> int:
         "aggregated_signals": aggregated,
         "session_details": all_signals,
     }
+    # Enrich candidates with id and ensure title key exists
     if candidates:
-        output["candidates"] = candidates
+        date_str = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
+        for i, c in enumerate(candidates):
+            c["id"] = f"raw_{date_str}_{i + 1:03d}"
+            # Handle backward compatibility: LLM might output 'name' instead of 'title'
+            if "title" not in c and "name" in c:
+                c["title"] = c.pop("name")
+    output["candidates"] = candidates if candidates else []
 
     output_path = output_dir / "raw_candidates.yaml"
     output_path.write_text(

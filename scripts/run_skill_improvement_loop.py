@@ -285,7 +285,7 @@ def run_llm_review(project_root: Path, skill_name: str, prompt_file: str) -> dic
                 continue
 
             # Parse claude output to extract the review JSON
-            response = _extract_json_from_claude(result.stdout)
+            response = _extract_json_from_claude(result.stdout, ["score"])
             if response:
                 return response
             logger.warning("Could not parse LLM JSON on attempt %d.", attempt + 1)
@@ -299,12 +299,15 @@ def run_llm_review(project_root: Path, skill_name: str, prompt_file: str) -> dic
     return None
 
 
-def _extract_json_from_claude(output: str) -> dict | None:
-    """Extract review JSON from claude CLI output."""
+def _extract_json_from_claude(output: str, required_keys: list[str]) -> dict | None:
+    """Extract JSON from claude CLI --output-format json envelope.
+
+    Unwraps the envelope (result or content[].text), then scans for
+    the first JSON object containing any of the required_keys.
+    """
     # claude --output-format json wraps response; try to extract inner JSON
     try:
         wrapper = json.loads(output)
-        # The actual text is in result or content
         text = ""
         if isinstance(wrapper, dict):
             text = wrapper.get("result", "") or ""
@@ -328,7 +331,7 @@ def _extract_json_from_claude(output: str) -> dict | None:
             break
         try:
             obj, end_idx = decoder.raw_decode(text, pos)
-            if isinstance(obj, dict) and "score" in obj:
+            if isinstance(obj, dict) and any(k in obj for k in required_keys):
                 return obj
             idx = pos + 1
         except json.JSONDecodeError:

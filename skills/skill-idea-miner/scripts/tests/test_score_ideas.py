@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 @pytest.fixture(scope="module")
@@ -198,3 +199,51 @@ def test_find_duplicates_marks_similar(score_module):
     assert result[0].get("status") == "duplicate"
     assert "skill:market-breadth-reporter" in result[0].get("duplicate_of", "")
     assert result[0].get("jaccard_score", 0) > score_module.JACCARD_THRESHOLD
+
+
+# ── save_backlog atomic write tests ──
+
+
+def test_save_backlog_writes_valid_yaml(score_module, tmp_path: Path):
+    """save_backlog writes valid YAML that round-trips correctly."""
+    backlog_path = tmp_path / "backlog.yaml"
+    backlog = {
+        "updated_at_utc": "2026-03-01T10:00:00Z",
+        "ideas": [
+            {"id": "idea_001", "title": "Test Idea", "scores": {"composite": 75}},
+        ],
+    }
+
+    score_module.save_backlog(backlog_path, backlog)
+
+    assert backlog_path.exists()
+    loaded = yaml.safe_load(backlog_path.read_text(encoding="utf-8"))
+    assert loaded["ideas"][0]["id"] == "idea_001"
+    assert loaded["ideas"][0]["scores"]["composite"] == 75
+
+
+def test_save_backlog_no_temp_files_remain(score_module, tmp_path: Path):
+    """After save_backlog, no .tmp files remain in the directory."""
+    backlog_path = tmp_path / "backlog.yaml"
+    backlog = {"updated_at_utc": "", "ideas": []}
+
+    score_module.save_backlog(backlog_path, backlog)
+
+    tmp_files = list(tmp_path.glob(".backlog_*.tmp"))
+    assert tmp_files == [], f"Temp files should be cleaned up: {tmp_files}"
+
+
+def test_save_backlog_no_bak_created(score_module, tmp_path: Path):
+    """Atomic write replaces .bak strategy; no .bak file is created."""
+    backlog_path = tmp_path / "backlog.yaml"
+    backlog = {"updated_at_utc": "", "ideas": [{"id": "a"}]}
+
+    # Write twice to ensure overwrite path doesn't create .bak
+    score_module.save_backlog(backlog_path, backlog)
+    backlog["ideas"].append({"id": "b"})
+    score_module.save_backlog(backlog_path, backlog)
+
+    bak_files = list(tmp_path.glob("*.bak"))
+    assert bak_files == [], f"No .bak files should exist: {bak_files}"
+    loaded = yaml.safe_load(backlog_path.read_text(encoding="utf-8"))
+    assert len(loaded["ideas"]) == 2

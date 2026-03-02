@@ -148,6 +148,11 @@ def run_mine(project_root: Path, dry_run: bool = False) -> Path | None:
         )
         return None
 
+    # Log mine script's stderr for diagnostics (warnings about LLM failures etc.)
+    if result.stderr and result.stderr.strip():
+        for line in result.stderr.strip().splitlines()[-5:]:
+            logger.info("[mine] %s", line.strip())
+
     # Find the output file
     candidates_files = sorted(output_dir.glob("raw_candidates*.yaml"), reverse=True)
     if not candidates_files:
@@ -208,6 +213,11 @@ def run_score(
         )
         return False
 
+    # Log score script's stderr for diagnostics
+    if result.stderr and result.stderr.strip():
+        for line in result.stderr.strip().splitlines()[-5:]:
+            logger.info("[score] %s", line.strip())
+
     return True
 
 
@@ -229,7 +239,9 @@ def write_weekly_summary(
     total_ideas = len(ideas)
 
     # Top scored ideas (up to 5)
-    sorted_ideas = sorted(ideas, key=lambda x: x.get("score", 0), reverse=True)
+    sorted_ideas = sorted(
+        ideas, key=lambda x: x.get("scores", {}).get("composite", 0), reverse=True
+    )
     top_ideas = sorted_ideas[:5]
 
     entry = (
@@ -241,8 +253,8 @@ def write_weekly_summary(
     if top_ideas:
         entry += "- Top scored ideas:\n"
         for idea in top_ideas:
-            name = idea.get("name", "unnamed")
-            score = idea.get("score", 0)
+            name = idea.get("title", "unnamed")
+            score = idea.get("scores", {}).get("composite", 0)
             entry += f"  - {name} (score: {score})\n"
 
     if summary_path.exists():
@@ -333,6 +345,10 @@ def run_weekly(project_root: Path, dry_run: bool = False) -> int:
 
         # Rotate old logs
         rotate_logs(project_root)
+
+        if not score_ok:
+            logger.info("Weekly run complete (with scoring failure).")
+            return 1
 
         logger.info("Weekly run complete.")
         return 0

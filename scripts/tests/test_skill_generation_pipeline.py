@@ -147,7 +147,7 @@ def test_weekly_flow_success(pipeline_module, tmp_path: Path):
     backlog_path = tmp_path / pipeline_module.BACKLOG_FILE
     backlog_path.parent.mkdir(parents=True, exist_ok=True)
     backlog_path.write_text(
-        yaml.safe_dump({"ideas": [{"name": "idea-1", "score": 80}]}),
+        yaml.safe_dump({"ideas": [{"title": "idea-1", "scores": {"composite": 80}}]}),
         encoding="utf-8",
     )
 
@@ -245,7 +245,12 @@ def test_write_weekly_summary_creates(pipeline_module, tmp_path: Path):
     candidates_path = tmp_path / "raw_candidates.yaml"
     candidates_path.write_text("dummy", encoding="utf-8")
 
-    backlog = {"ideas": [{"name": "idea-a", "score": 90}, {"name": "idea-b", "score": 60}]}
+    backlog = {
+        "ideas": [
+            {"title": "idea-a", "scores": {"composite": 90}},
+            {"title": "idea-b", "scores": {"composite": 60}},
+        ]
+    }
 
     pipeline_module.write_weekly_summary(tmp_path, candidates_path, backlog)
 
@@ -263,8 +268,13 @@ def test_write_weekly_summary_appends(pipeline_module, tmp_path: Path):
     candidates_path = tmp_path / "raw_candidates.yaml"
     candidates_path.write_text("dummy", encoding="utf-8")
 
-    backlog1 = {"ideas": [{"name": "idea-1", "score": 80}]}
-    backlog2 = {"ideas": [{"name": "idea-1", "score": 80}, {"name": "idea-2", "score": 70}]}
+    backlog1 = {"ideas": [{"title": "idea-1", "scores": {"composite": 80}}]}
+    backlog2 = {
+        "ideas": [
+            {"title": "idea-1", "scores": {"composite": 80}},
+            {"title": "idea-2", "scores": {"composite": 70}},
+        ]
+    }
 
     pipeline_module.write_weekly_summary(tmp_path, candidates_path, backlog1)
     pipeline_module.write_weekly_summary(tmp_path, candidates_path, backlog2)
@@ -277,6 +287,54 @@ def test_write_weekly_summary_appends(pipeline_module, tmp_path: Path):
 
 
 # -- Log rotation test --
+
+
+def test_run_weekly_score_failure(pipeline_module, tmp_path: Path):
+    """When scoring fails, run_weekly returns 1 but still writes summary and state."""
+    _setup_mine_script(tmp_path, pipeline_module)
+    _setup_score_script(tmp_path, pipeline_module)
+
+    # Create candidates file
+    output_dir = tmp_path / pipeline_module.SUMMARY_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+    candidates_file = output_dir / "raw_candidates_2026-03-01.yaml"
+    candidates_file.write_text(
+        yaml.safe_dump({"candidates": [{"name": "test-skill"}]}),
+        encoding="utf-8",
+    )
+
+    # Create backlog
+    backlog_path = tmp_path / pipeline_module.BACKLOG_FILE
+    backlog_path.parent.mkdir(parents=True, exist_ok=True)
+    backlog_path.write_text(
+        yaml.safe_dump({"ideas": [{"title": "idea-1", "scores": {"composite": 80}}]}),
+        encoding="utf-8",
+    )
+
+    call_count = [0]
+
+    def fake_run(cmd, **kwargs):
+        call_count[0] += 1
+        cmd_str = " ".join(str(c) for c in cmd)
+        # Score script fails
+        if pipeline_module.SCORE_SCRIPT in cmd_str:
+            return CompletedProcess(cmd, 1, "", "scoring error")
+        return CompletedProcess(cmd, 0, "", "")
+
+    with patch.object(pipeline_module.subprocess, "run", fake_run):
+        rc = pipeline_module.run_weekly(tmp_path, dry_run=False)
+
+    # Should return 1 due to scoring failure
+    assert rc == 1
+
+    # Summary file should still be created
+    summary_files = list((tmp_path / pipeline_module.SUMMARY_DIR).glob("*_summary.md"))
+    assert len(summary_files) >= 1
+
+    # State should be updated with score_ok: False
+    state = pipeline_module.load_state(tmp_path)
+    assert len(state["history"]) >= 1
+    assert state["history"][-1]["score_ok"] is False
 
 
 def test_rotate_logs(pipeline_module, tmp_path: Path):

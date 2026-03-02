@@ -221,7 +221,7 @@ def test_write_daily_summary_appends(loop_module, tmp_path: Path):
 def test_extract_json_from_claude_simple(loop_module):
     """Simple JSON with score field is extracted."""
     raw = '{"score": 85, "summary": "good", "findings": []}'
-    result = loop_module._extract_json_from_claude(raw)
+    result = loop_module._extract_json_from_claude(raw, ["score"])
     assert result is not None
     assert result["score"] == 85
 
@@ -233,7 +233,7 @@ def test_extract_json_from_claude_wrapped(loop_module):
             "result": 'Here is the review:\n{"score": 72, "summary": "ok", "findings": []}',
         }
     )
-    result = loop_module._extract_json_from_claude(wrapper)
+    result = loop_module._extract_json_from_claude(wrapper, ["score"])
     assert result is not None
     assert result["score"] == 72
 
@@ -247,7 +247,7 @@ def test_extract_json_from_claude_greedy_fix(loop_module):
         '{"score": 90, "summary": "x", "findings": []}\n\n'
         'Some trailing text with {"other": "data"}'
     )
-    result = loop_module._extract_json_from_claude(text)
+    result = loop_module._extract_json_from_claude(text, ["score"])
     assert result is not None
     assert result["score"] == 90
 
@@ -264,7 +264,7 @@ def test_extract_json_from_claude_nested_findings(loop_module):
             ],
         }
     )
-    result = loop_module._extract_json_from_claude(text)
+    result = loop_module._extract_json_from_claude(text, ["score"])
     assert result is not None
     assert result["score"] == 65
     assert len(result["findings"]) == 2
@@ -285,7 +285,7 @@ def test_extract_json_from_claude_nested_in_prose(loop_module):
         )
         + "\n\nLet me know if you need more details."
     )
-    result = loop_module._extract_json_from_claude(text)
+    result = loop_module._extract_json_from_claude(text, ["score"])
     assert result is not None
     assert result["score"] == 78
 
@@ -305,7 +305,7 @@ def test_extract_json_from_claude_braces_in_string(loop_module):
             ],
         }
     )
-    result = loop_module._extract_json_from_claude(text)
+    result = loop_module._extract_json_from_claude(text, ["score"])
     assert result is not None
     assert result["score"] == 55
     assert "{tests}" in result["summary"]
@@ -314,13 +314,13 @@ def test_extract_json_from_claude_braces_in_string(loop_module):
 def test_extract_json_from_claude_no_score(loop_module):
     """JSON without 'score' key returns None."""
     text = '{"summary": "review", "findings": []}'
-    result = loop_module._extract_json_from_claude(text)
+    result = loop_module._extract_json_from_claude(text, ["score"])
     assert result is None
 
 
 def test_extract_json_from_claude_empty_input(loop_module):
     """Empty input returns None."""
-    result = loop_module._extract_json_from_claude("")
+    result = loop_module._extract_json_from_claude("", ["score"])
     assert result is None
 
 

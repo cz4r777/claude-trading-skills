@@ -261,6 +261,66 @@ def test_detect_automation_requests(mine_module):
     assert len(result["samples"]) == 3
 
 
+def test_detect_automation_requests_excludes_automated_prompts(mine_module):
+    """Claude -p automated prompts are excluded from automation_requests."""
+    messages = [
+        "# LLM Skill Review Request\nPlease review this skill...",
+        "Improve the skill 'backtest-expert' using the review results below.",
+        "Implement the following plan:\n1. Create skill...",
+        "Score each skill idea candidate on three dimensions...",
+        "Can you create a skill for this?",  # Real user request
+    ]
+    result = mine_module._detect_automation_requests(messages)
+    assert result["count"] == 1
+    assert "create a skill" in result["samples"][0].lower()
+
+
+def test_is_automated_prompt(mine_module):
+    """_is_automated_prompt correctly identifies automated prompts."""
+    assert mine_module._is_automated_prompt("# LLM Skill Review Request\nContent...")
+    assert mine_module._is_automated_prompt("Improve the skill 'x' using...")
+    assert mine_module._is_automated_prompt("Implement the following plan:\n...")
+    assert mine_module._is_automated_prompt("Score each skill idea candidate on...")
+    assert not mine_module._is_automated_prompt("Can you create a skill?")
+    assert not mine_module._is_automated_prompt("I want to automate this")
+
+
+# ── _detect_unresolved_requests ──
+
+
+def test_detect_unresolved_requests_no_gap(mine_module):
+    """User message followed by quick assistant response is not unresolved."""
+    timed_entries = [
+        {"timestamp": "2026-02-28T10:00:00+00:00", "type": "user"},
+        {"timestamp": "2026-02-28T10:00:30+00:00", "type": "assistant"},
+    ]
+    result = mine_module._detect_unresolved_requests(timed_entries)
+    assert result["count"] == 0
+
+
+def test_detect_unresolved_requests_with_gap(mine_module):
+    """User message followed by 10-min gap before response is unresolved."""
+    timed_entries = [
+        {"timestamp": "2026-02-28T10:00:00+00:00", "type": "user"},
+        {"timestamp": "2026-02-28T10:10:00+00:00", "type": "assistant"},
+    ]
+    result = mine_module._detect_unresolved_requests(timed_entries)
+    assert result["count"] == 1
+
+
+def test_detect_unresolved_requests_user_then_user(mine_module):
+    """Consecutive user messages with gap: first is unresolved."""
+    timed_entries = [
+        {"timestamp": "2026-02-28T10:00:00+00:00", "type": "user"},
+        {"timestamp": "2026-02-28T10:06:00+00:00", "type": "user"},
+        {"timestamp": "2026-02-28T10:06:10+00:00", "type": "assistant"},
+    ]
+    result = mine_module._detect_unresolved_requests(timed_entries)
+    # First user: next non-user is assistant at +6:10 (>5min) → unresolved
+    # Second user: next non-user is assistant at +0:10 (<5min) → resolved
+    assert result["count"] == 1
+
+
 # ── _extract_json_from_claude ──
 
 
@@ -278,7 +338,7 @@ def test_extract_json_from_claude_candidates(mine_module):
             ],
         }
     )
-    result = mine_module._extract_json_from_claude(raw)
+    result = mine_module._extract_json_from_claude(raw, ["candidates"])
     assert result is not None
     assert "candidates" in result
     assert len(result["candidates"]) == 1
@@ -292,7 +352,7 @@ def test_extract_json_from_claude_wrapped(mine_module):
         }
     )
     wrapper = json.dumps({"result": f"Here are the ideas:\n{inner}\nDone."})
-    result = mine_module._extract_json_from_claude(wrapper)
+    result = mine_module._extract_json_from_claude(wrapper, ["candidates"])
     assert result is not None
     assert result["candidates"][0]["name"] == "x"
 
@@ -300,5 +360,368 @@ def test_extract_json_from_claude_wrapped(mine_module):
 def test_extract_json_from_claude_no_candidates(mine_module):
     """JSON without 'candidates' key returns None."""
     raw = '{"score": 85, "summary": "review"}'
-    result = mine_module._extract_json_from_claude(raw)
+    result = mine_module._extract_json_from_claude(raw, ["candidates"])
     assert result is None
+
+
+# ── Real session format: entry.type != msg.type ──
+
+
+def test_parse_assistant_with_message_type(mine_module, tmp_path: Path):
+    """Real session format: entry.type=assistant, msg.type=message, msg.role=assistant."""
+    log = tmp_path / "session.jsonl"
+    entry = {
+        "type": "assistant",
+        "message": {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Read",
+                    "input": {"file_path": "skills/pead-screener/SKILL.md"},
+                },
+            ],
+        },
+        "timestamp": "2026-02-28T10:00:00+00:00",
+    }
+    log.write_text(json.dumps(entry))
+    result = mine_module.parse_session(log)
+    tool_uses = [t for t in result["tool_uses"] if not t["name"].startswith("__")]
+    assert len(tool_uses) == 1
+    assert tool_uses[0]["name"] == "Read"
+
+
+def test_timed_entries_correct_types(mine_module, tmp_path: Path):
+    """timed_entries records entry-level type, not message-level type."""
+    log = tmp_path / "session.jsonl"
+    lines = [
+        json.dumps(
+            {
+                "type": "user",
+                "message": {"type": "user", "content": "Hello"},
+                "userType": "external",
+                "timestamp": "2026-02-28T10:00:00+00:00",
+            }
+        ),
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Hi"}],
+                },
+                "timestamp": "2026-02-28T10:00:05+00:00",
+            }
+        ),
+    ]
+    log.write_text("\n".join(lines))
+    result = mine_module.parse_session(log)
+    assert result["timed_entries"][0]["type"] == "user"
+    assert result["timed_entries"][1]["type"] == "assistant"
+
+
+def test_parse_assistant_role_fallback(mine_module, tmp_path: Path):
+    """When entry has no type but msg.role=assistant, tool_use blocks are extracted."""
+    log = tmp_path / "session.jsonl"
+    entry = {
+        "message": {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Bash",
+                    "input": {"command": "ls"},
+                },
+            ],
+        },
+        "timestamp": "2026-02-28T10:00:00+00:00",
+    }
+    log.write_text(json.dumps(entry))
+    result = mine_module.parse_session(log)
+    tool_uses = [t for t in result["tool_uses"] if not t["name"].startswith("__")]
+    assert len(tool_uses) == 1
+    assert tool_uses[0]["name"] == "Bash"
+
+
+# ── find_project_dirs endswith fix ──
+
+
+def test_find_project_dirs_no_false_positive(mine_module, tmp_path: Path):
+    """Suffix match without dash boundary should not match."""
+    base = tmp_path / "projects"
+    base.mkdir()
+    # "notclaude-trading-skills" ends with "claude-trading-skills" but lacks
+    # a dash boundary separating the path segment from the project name.
+    (base / "-Users-alice-notclaude-trading-skills").mkdir()
+    # This SHOULD match (proper dash boundary)
+    (base / "-Users-bob-PycharmProjects-claude-trading-skills").mkdir()
+
+    result = mine_module.find_project_dirs(base, ["claude-trading-skills"])
+    assert len(result) == 1
+    assert result[0][1].name == "-Users-bob-PycharmProjects-claude-trading-skills"
+
+
+def test_find_project_dirs_exact_name(mine_module, tmp_path: Path):
+    """Directory with exact project name matches."""
+    base = tmp_path / "projects"
+    base.mkdir()
+    (base / "claude-trading-skills").mkdir()
+
+    result = mine_module.find_project_dirs(base, ["claude-trading-skills"])
+    assert len(result) == 1
+    assert result[0][0] == "claude-trading-skills"
+
+
+# ── Fix A: _parse_timestamp timezone normalization ──
+
+
+def test_parse_timestamp_naive_gets_utc(mine_module):
+    """Naive timestamps are normalized to UTC-aware."""
+    from datetime import timezone
+
+    dt = mine_module._parse_timestamp("2026-03-01T10:00:00")
+    assert dt is not None
+    assert dt.tzinfo is not None
+    assert dt.tzinfo == timezone.utc
+
+
+def test_parse_timestamp_aware_preserved(mine_module):
+    """Aware timestamps keep their original tzinfo."""
+    from datetime import timedelta
+
+    dt = mine_module._parse_timestamp("2026-03-01T10:00:00+09:00")
+    assert dt is not None
+    assert dt.utcoffset() == timedelta(hours=9)
+
+
+def test_unresolved_requests_mixed_tz(mine_module):
+    """Naive and aware timestamps can be subtracted without TypeError."""
+    timed_entries = [
+        {"timestamp": "2026-03-01T10:00:00", "type": "user"},
+        {"timestamp": "2026-03-01T10:10:00+00:00", "type": "assistant"},
+    ]
+    result = mine_module._detect_unresolved_requests(timed_entries)
+    assert result["count"] == 1  # 10-min gap → unresolved
+
+
+# ── Fix A2: sidechain contamination ──
+
+
+def test_sidechain_excluded_from_timed_entries(mine_module, tmp_path: Path):
+    """Sidechain messages should not appear in timed_entries."""
+    log = tmp_path / "session.jsonl"
+    lines = [
+        json.dumps(
+            {
+                "type": "user",
+                "message": {"type": "user", "content": "Hello"},
+                "userType": "external",
+                "timestamp": "2026-03-01T10:00:00+00:00",
+            }
+        ),
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"type": "assistant", "content": [{"type": "text", "text": "Hi"}]},
+                "isSidechain": True,
+                "timestamp": "2026-03-01T10:00:05+00:00",
+            }
+        ),
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"type": "assistant", "content": [{"type": "text", "text": "Real"}]},
+                "timestamp": "2026-03-01T10:00:10+00:00",
+            }
+        ),
+    ]
+    log.write_text("\n".join(lines))
+    result = mine_module.parse_session(log)
+    # Sidechain entry should NOT be in timed_entries
+    types = [e["type"] for e in result["timed_entries"]]
+    assert len(types) == 2  # user + non-sidechain assistant
+    assert types == ["user", "assistant"]
+
+
+# ── Fix A3: end-of-session exclusion ──
+
+
+def test_unresolved_requests_end_of_session(mine_module):
+    """User message at end of session (no following non-user entry) is NOT unresolved."""
+    timed_entries = [
+        {"timestamp": "2026-03-01T10:00:00+00:00", "type": "user"},
+        {"timestamp": "2026-03-01T10:00:05+00:00", "type": "assistant"},
+        {"timestamp": "2026-03-01T10:05:00+00:00", "type": "user"},
+        # No assistant response after this — end of session
+    ]
+    result = mine_module._detect_unresolved_requests(timed_entries)
+    assert result["count"] == 0  # Last user message should not count
+
+
+# ── Fix D: MAX_ERROR_OUTPUT_LEN truncation ──
+
+
+def test_error_output_truncated(mine_module, tmp_path: Path):
+    """Long error outputs are truncated to MAX_ERROR_OUTPUT_LEN."""
+    log = tmp_path / "session.jsonl"
+    long_error = "Error: " + "x" * 1000
+    entry = {
+        "type": "tool_result",
+        "message": {"type": "tool_result", "content": long_error},
+        "is_error": True,
+        "timestamp": "2026-03-01T10:00:00+00:00",
+    }
+    log.write_text(json.dumps(entry))
+    result = mine_module.parse_session(log)
+    error_entries = [t for t in result["tool_uses"] if t["name"] == "__tool_result_error__"]
+    assert len(error_entries) == 1
+    assert len(error_entries[0]["output"]) <= mine_module.MAX_ERROR_OUTPUT_LEN
+
+
+def test_error_pattern_output_truncated(mine_module, tmp_path: Path):
+    """Error-pattern path (is_error=False) also truncates long output."""
+    log = tmp_path / "session.jsonl"
+    # Not flagged as is_error, but contains an error pattern
+    long_traceback = "Traceback (most recent call last):\n" + "  File x.py\n" * 200
+    entry = {
+        "type": "tool_result",
+        "message": {"type": "tool_result", "content": long_traceback},
+        "timestamp": "2026-03-01T10:00:00+00:00",
+    }
+    log.write_text(json.dumps(entry))
+    result = mine_module.parse_session(log)
+    error_entries = [t for t in result["tool_uses"] if t["name"] == "__tool_result_error__"]
+    assert len(error_entries) == 1
+    assert len(error_entries[0]["output"]) <= mine_module.MAX_ERROR_OUTPUT_LEN
+
+
+# ── Z-suffix timestamp handling (Python 3.10 compatibility) ──
+
+
+def test_parse_timestamp_z_suffix(mine_module):
+    """Timestamps ending with Z are parsed correctly on Python 3.10."""
+    from datetime import timezone
+
+    dt = mine_module._parse_timestamp("2026-03-01T10:00:00Z")
+    assert dt is not None
+    assert dt.tzinfo == timezone.utc
+    assert dt.hour == 10
+
+
+def test_parse_timestamp_z_with_millis(mine_module):
+    """Z-suffix with milliseconds is also handled."""
+    dt = mine_module._parse_timestamp("2026-03-01T10:00:00.123Z")
+    assert dt is not None
+    assert dt.microsecond == 123000
+
+
+def test_unresolved_requests_z_timestamps(mine_module):
+    """Real session logs use Z-suffix timestamps; detection must work."""
+    timed_entries = [
+        {"timestamp": "2026-03-01T10:00:00Z", "type": "user"},
+        {"timestamp": "2026-03-01T10:10:00Z", "type": "assistant"},
+    ]
+    result = mine_module._detect_unresolved_requests(timed_entries)
+    assert result["count"] == 1  # 10-min gap → unresolved
+
+
+# ── Response type filtering ──
+
+
+def test_unresolved_requests_ignores_system_entries(mine_module):
+    """system/progress/queue-operation entries do not count as a response."""
+    timed_entries = [
+        {"timestamp": "2026-03-01T10:00:00+00:00", "type": "user"},
+        {"timestamp": "2026-03-01T10:00:01+00:00", "type": "system"},
+        {"timestamp": "2026-03-01T10:00:02+00:00", "type": "progress"},
+        {"timestamp": "2026-03-01T10:06:00+00:00", "type": "assistant"},
+    ]
+    result = mine_module._detect_unresolved_requests(timed_entries)
+    # system/progress at +1s/+2s are skipped; assistant at +6min is the real response → unresolved
+    assert result["count"] == 1
+
+
+def test_unresolved_requests_tool_result_counts_as_response(mine_module):
+    """tool_result entries count as a valid response."""
+    timed_entries = [
+        {"timestamp": "2026-03-01T10:00:00+00:00", "type": "user"},
+        {"timestamp": "2026-03-01T10:00:30+00:00", "type": "tool_result"},
+    ]
+    result = mine_module._detect_unresolved_requests(timed_entries)
+    assert result["count"] == 0  # tool_result within 5 min → resolved
+
+
+# ── N4: C1 regression test (name→title conversion + id generation) ──
+
+
+def test_run_converts_name_to_title_and_adds_id(mine_module, tmp_path: Path):
+    """run() converts LLM-returned 'name' to 'title' and generates 'id' for each candidate."""
+    import types
+    from unittest.mock import patch
+
+    import yaml
+
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    # Candidates as the LLM might return them (with 'name' instead of 'title')
+    fake_candidates = [
+        {"name": "Auto Reporter", "description": "Automated reports", "priority": "high"},
+        {"title": "Already Titled", "description": "Has title", "priority": "low"},
+    ]
+
+    # Build minimal args namespace
+    args = types.SimpleNamespace(
+        output_dir=str(output_dir),
+        project=None,
+        lookback_days=7,
+        dry_run=False,
+    )
+
+    # Patch dependencies to isolate the enrichment logic
+    with (
+        patch.object(mine_module, "find_project_dirs", return_value=[("proj", tmp_path)]),
+        patch.object(
+            mine_module,
+            "list_session_logs",
+            return_value=[("proj", tmp_path / "fake.jsonl")],
+        ),
+        patch.object(
+            mine_module,
+            "parse_session",
+            return_value={
+                "user_messages": ["hello"],
+                "tool_uses": [],
+                "timestamps": [],
+                "timed_entries": [],
+            },
+        ),
+        patch.object(mine_module, "abstract_with_llm", return_value=fake_candidates),
+    ):
+        rc = mine_module.run(args)
+
+    assert rc == 0
+
+    # Read the output file
+    output_path = output_dir / "raw_candidates.yaml"
+    assert output_path.exists()
+    data = yaml.safe_load(output_path.read_text(encoding="utf-8"))
+
+    candidates = data["candidates"]
+    assert len(candidates) == 2
+
+    # First candidate: 'name' should be converted to 'title'
+    assert "title" in candidates[0]
+    assert candidates[0]["title"] == "Auto Reporter"
+    assert "name" not in candidates[0]  # 'name' key removed
+
+    # Second candidate: already had 'title', should be untouched
+    assert candidates[1]["title"] == "Already Titled"
+
+    # Both should have 'id' assigned
+    assert candidates[0]["id"].startswith("raw_")
+    assert candidates[1]["id"].startswith("raw_")
+    assert candidates[0]["id"] != candidates[1]["id"]
