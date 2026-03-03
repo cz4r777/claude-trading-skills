@@ -36,8 +36,8 @@ DEFAULT_WEIGHTS = {
 DEFAULT_CONFIG = {
     "weights": DEFAULT_WEIGHTS,
     "deduplication": {
-        "similarity_threshold": 0.80,
-        "ticker_overlap_threshold": 0.50,
+        "similarity_threshold": 0.60,
+        "ticker_overlap_threshold": 0.30,
         "merge_bonus_per_duplicate": 0.05,
     },
     "agreement": {

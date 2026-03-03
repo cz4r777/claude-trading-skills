@@ -14,8 +14,8 @@ weights:
 
 # Deduplication settings
 deduplication:
-  similarity_threshold: 0.80  # Minimum similarity to consider duplicates
-  ticker_overlap_threshold: 0.50  # Minimum ticker overlap ratio
+  similarity_threshold: 0.60  # Minimum Jaccard similarity for short titles
+  ticker_overlap_threshold: 0.30  # Minimum ticker overlap ratio
   merge_bonus_per_duplicate: 0.05  # Score boost per merged signal
 
 # Agreement bonus
