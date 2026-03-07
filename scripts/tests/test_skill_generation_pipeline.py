@@ -365,6 +365,7 @@ def _make_idea(
     id_: str = "raw_001",
     title: str = "test-skill",
     composite: float = 80,
+    trading_value: float = 50,
     status: str = "pending",
     retry_count: int = 0,
 ) -> dict:
@@ -374,7 +375,7 @@ def _make_idea(
         "title": title,
         "description": "A test skill description",
         "category": "testing",
-        "scores": {"composite": composite},
+        "scores": {"composite": composite, "trading_value": trading_value},
         "status": status,
     }
     if retry_count > 0:
@@ -477,6 +478,44 @@ def test_select_next_idea_empty_backlog(pipeline_module, tmp_path: Path):
     """Empty backlog returns None."""
     result = pipeline_module.select_next_idea({"ideas": []}, tmp_path)
     assert result is None
+
+
+def test_select_next_idea_skips_low_trading_value(pipeline_module, tmp_path):
+    """trading_value < MIN_TRADING_VALUE ideas are skipped."""
+    backlog = {
+        "ideas": [
+            _make_idea(id_="low_tv", composite=90, trading_value=8),
+            _make_idea(id_="high_tv", composite=60, trading_value=50),
+        ]
+    }
+    result = pipeline_module.select_next_idea(backlog, tmp_path)
+    assert result["id"] == "high_tv"
+
+
+def test_select_next_idea_all_low_trading_value_returns_none(pipeline_module, tmp_path):
+    """All ideas below trading_value threshold returns None."""
+    backlog = {
+        "ideas": [
+            _make_idea(id_="low1", composite=90, trading_value=5),
+            _make_idea(id_="low2", composite=80, trading_value=10),
+        ]
+    }
+    result = pipeline_module.select_next_idea(backlog, tmp_path)
+    assert result is None
+
+
+def test_select_next_idea_skips_retryable_low_trading_value(pipeline_module, tmp_path):
+    """Retryable ideas with low trading_value are also skipped."""
+    backlog = {
+        "ideas": [
+            _make_idea(
+                id_="retry_low", composite=35, trading_value=8, status="pr_failed", retry_count=1
+            ),
+            _make_idea(id_="pending_high", composite=60, trading_value=50),
+        ]
+    }
+    result = pipeline_module.select_next_idea(backlog, tmp_path)
+    assert result["id"] == "pending_high"
 
 
 # -- Daily flow: idea_to_skill_name tests --

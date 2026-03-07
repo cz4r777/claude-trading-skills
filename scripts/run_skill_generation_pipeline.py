@@ -47,6 +47,7 @@ LOG_RETENTION_DAYS = 30
 DESIGN_SCORE_THRESHOLD = 70
 MAX_DESIGN_ITERATIONS = 2  # initial review + 1 improvement pass
 MAX_RETRIES = 1  # retry count for design_failed/pr_failed
+MIN_TRADING_VALUE = 15  # skip ideas with trading_value below this threshold
 CLAUDE_BUDGET_DESIGN = 3.00
 CLAUDE_BUDGET_REVISE = 2.00
 DESIGN_TIMEOUT = 1200
@@ -564,6 +565,15 @@ def select_next_idea(backlog: dict, project_root: Path) -> dict | None:
     for idea in backlog.get("ideas", []):
         status = idea.get("status", "pending")
         retry_count = idea.get("retry_count", 0)
+        trading_value = idea.get("scores", {}).get("trading_value", 0)
+        if trading_value < MIN_TRADING_VALUE:
+            logger.info(
+                "Skipping %s: trading_value=%s < %s",
+                idea.get("id"),
+                trading_value,
+                MIN_TRADING_VALUE,
+            )
+            continue
         if status == "pending":
             eligible.append(idea)
         elif status in RETRYABLE and retry_count <= MAX_RETRIES:
