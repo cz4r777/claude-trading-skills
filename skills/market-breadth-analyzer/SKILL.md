@@ -28,6 +28,12 @@ Quantify market breadth health using a data-driven 6-component scoring system (0
 - ブレッドス指標に基づくエクスポージャー判断
 - 市場の健康度をデータで確認したい
 
+## Prerequisites
+
+- **Python 3.8+** with `requests` library (for fetching CSV data)
+- **Internet access** to reach GitHub Pages URLs
+- **No API keys required** - uses freely available public CSV data
+
 ## Difference from Breadth Chart Analyst
 
 | Aspect | Market Breadth Analyzer | Breadth Chart Analyst |
