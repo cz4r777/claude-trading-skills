@@ -6,7 +6,7 @@ This script verifies that Alpaca API credentials are correctly configured
 and tests basic API functionality.
 
 Usage:
-    python3 test_alpaca_connection.py
+    python3 check_alpaca_connection.py
 
 Environment Variables:
     ALPACA_API_KEY: Your Alpaca API Key ID

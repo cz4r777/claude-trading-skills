@@ -66,8 +66,35 @@ def release_lock(project_root: Path) -> None:
 # ── Git safety ──
 
 
+_SAFE_DIRTY_PREFIXES = ("reports/", "logs/")
+
+
+def _is_safe_dirty_tree(porcelain_output: str) -> bool:
+    """Return True when all dirty files are in safe (non-source) directories.
+
+    Untracked files (??) are always blocked regardless of path.
+    Tracked changes (M/A/D/R etc.) are allowed only under reports/ or logs/.
+    """
+    for line in porcelain_output.splitlines():
+        if not line.strip():
+            continue
+        status_code = line[:2]
+        filepath = line[3:].strip().split(" -> ")[-1]  # handle renames
+        if status_code == "??":
+            logger.warning("Blocked: untracked file: %s", filepath)
+            return False
+        if not filepath.startswith(_SAFE_DIRTY_PREFIXES):
+            logger.warning("Blocked: non-safe dirty file: %s", filepath)
+            return False
+    return True
+
+
 def git_safe_check(project_root: Path) -> bool:
-    """Verify clean working tree on main branch and pull latest."""
+    """Verify working tree on main branch and pull latest.
+
+    Allows tracked changes in reports/ and logs/ to avoid blocking the
+    pipeline when only output files are dirty.
+    """
     try:
         status = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -77,8 +104,13 @@ def git_safe_check(project_root: Path) -> bool:
             check=True,
         )
         if status.stdout.strip():
-            logger.error("Working tree is dirty. Aborting.")
-            return False
+            if not _is_safe_dirty_tree(status.stdout):
+                logger.error("Working tree has non-safe dirty files. Aborting.")
+                return False
+            logger.info(
+                "Dirty tree contains only safe files, proceeding: %s",
+                [line[3:].strip() for line in status.stdout.strip().splitlines()],
+            )
 
         branch = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -257,44 +289,77 @@ def run_llm_review(project_root: Path, skill_name: str, prompt_file: str) -> dic
         }
     )
 
-    for attempt in range(CLAUDE_RETRIES + 1):
-        try:
-            result = subprocess.run(
-                [
+    # Try with --json-schema first, then fall back to plain --output-format json
+    strategies = [
+        {
+            "label": "json-schema",
+            "extra_args": ["--json-schema", review_schema],
+        },
+        {
+            "label": "plain-json",
+            "extra_args": [],
+        },
+    ]
+
+    for strategy in strategies:
+        for attempt in range(CLAUDE_RETRIES + 1):
+            try:
+                cmd = [
                     "claude",
                     "-p",
                     "--output-format",
                     "json",
-                    "--json-schema",
-                    review_schema,
+                    *strategy["extra_args"],
                     "--max-turns",
                     "1",
                     f"--max-budget-usd={CLAUDE_BUDGET_REVIEW}",
-                ],
-                input=prompt_text,
-                cwd=project_root,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=CLAUDE_TIMEOUT,
-            )
-            if result.returncode != 0:
-                logger.warning(
-                    "claude -p attempt %d failed: %s", attempt + 1, result.stderr.strip()[:200]
+                ]
+                # For plain-json mode, append schema instructions to the prompt
+                effective_prompt = prompt_text
+                if strategy["label"] == "plain-json":
+                    effective_prompt += (
+                        "\n\nIMPORTANT: Respond with a single JSON object containing these keys: "
+                        '"score" (integer 0-100), "summary" (string), '
+                        '"findings" (array of objects with "severity", "message", "improvement"). '
+                        "Do not wrap in markdown code fences."
+                    )
+                result = subprocess.run(
+                    cmd,
+                    input=effective_prompt,
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=CLAUDE_TIMEOUT,
                 )
-                continue
+                if result.returncode != 0:
+                    logger.warning(
+                        "claude -p [%s] attempt %d failed: %s",
+                        strategy["label"],
+                        attempt + 1,
+                        result.stderr.strip()[:200],
+                    )
+                    continue
 
-            # Parse claude output to extract the review JSON
-            response = _extract_json_from_claude(result.stdout, ["score"])
-            if response:
-                return response
-            logger.warning("Could not parse LLM JSON on attempt %d.", attempt + 1)
+                # Parse claude output to extract the review JSON
+                response = _extract_json_from_claude(result.stdout, ["score"])
+                if response:
+                    return response
+                logger.warning(
+                    "Could not parse LLM JSON [%s] on attempt %d.",
+                    strategy["label"],
+                    attempt + 1,
+                )
 
-        except subprocess.TimeoutExpired:
-            logger.warning("claude -p timed out on attempt %d.", attempt + 1)
-        except FileNotFoundError:
-            logger.warning("claude CLI disappeared; skipping LLM review.")
-            return None
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "claude -p [%s] timed out on attempt %d.", strategy["label"], attempt + 1
+                )
+            except FileNotFoundError:
+                logger.warning("claude CLI disappeared; skipping LLM review.")
+                return None
+
+        logger.info("Strategy '%s' exhausted; trying next.", strategy["label"])
 
     return None
 

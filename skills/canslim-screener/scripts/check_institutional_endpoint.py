@@ -10,7 +10,7 @@ import sys
 import requests
 
 
-def test_institutional_endpoint():
+def check_institutional_endpoint():
     """
     Test if institutional-holder endpoint is available with current API key
 
@@ -105,7 +105,7 @@ if __name__ == "__main__":
     print("=" * 70)
     print()
 
-    result = test_institutional_endpoint()
+    result = check_institutional_endpoint()
 
     print()
     print("=" * 70)

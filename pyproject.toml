@@ -13,6 +13,7 @@ description = "Claude Skills for equity investors and traders"
 requires-python = ">=3.9"
 dependencies = [
     "pyyaml>=6.0",
+    "scipy>=1.13.1",
 ]
 
 [project.optional-dependencies]
@@ -72,6 +73,11 @@ testpaths = [
     "skills/skill-idea-miner/scripts/tests",
     "skills/skill-designer/scripts/tests",
     "skills/trade-hypothesis-ideator/scripts/tests",
+    "skills/earnings-calendar/scripts/tests",
+    "skills/options-strategy-advisor/scripts/tests",
+    # canslim-screener excluded: requires bs4 (optional dep)
+    "skills/skill-integration-tester/scripts/tests",
+    "scripts/tests",
 ]
 
 [tool.bandit]

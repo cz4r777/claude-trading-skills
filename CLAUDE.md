@@ -342,7 +342,7 @@ python3 skills/theme-detector/scripts/theme_detector.py \
 **Portfolio Manager:** ⚠️ Requires Alpaca MCP Server
 ```bash
 # Test Alpaca connection
-python3 portfolio-manager/scripts/test_alpaca_connection.py
+python3 skills/portfolio-manager/scripts/check_alpaca_connection.py
 
 # Portfolio analysis is done via Claude with Alpaca MCP tools
 # See portfolio-manager/references/alpaca-mcp-setup.md for setup

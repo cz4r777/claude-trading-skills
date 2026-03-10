@@ -154,6 +154,46 @@ def test_git_safe_check_dirty_tree(loop_module, tmp_path: Path, monkeypatch):
     assert loop_module.git_safe_check(tmp_path) is False
 
 
+def test_is_safe_dirty_tree_reports_only(loop_module):
+    """Tracked changes only under reports/ and logs/ are safe."""
+    assert loop_module._is_safe_dirty_tree(" M reports/summary.md\n M logs/run.log\n") is True
+
+
+def test_is_safe_dirty_tree_blocks_source_files(loop_module):
+    """Tracked changes to source files are blocked."""
+    assert loop_module._is_safe_dirty_tree(" M scripts/run_skill_improvement_loop.py\n") is False
+
+
+def test_is_safe_dirty_tree_blocks_untracked(loop_module):
+    """Untracked files are always blocked, even under reports/."""
+    assert loop_module._is_safe_dirty_tree("?? reports/new_report.md\n") is False
+
+
+def test_is_safe_dirty_tree_mixed(loop_module):
+    """Mixed safe and unsafe files should block."""
+    output = " M reports/summary.md\n M skills/foo/SKILL.md\n"
+    assert loop_module._is_safe_dirty_tree(output) is False
+
+
+def test_git_safe_check_safe_dirty_passes(loop_module, tmp_path: Path, monkeypatch):
+    """Dirty tree with only reports/ changes should pass."""
+    call_count = [0]
+
+    def fake_run(cmd, **kwargs):
+        from subprocess import CompletedProcess
+
+        call_count[0] += 1
+        if "status" in cmd:
+            return CompletedProcess(cmd, 0, " M reports/summary.md\n", "")
+        if "rev-parse" in cmd:
+            return CompletedProcess(cmd, 0, "main\n", "")
+        # git pull --ff-only
+        return CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(loop_module.subprocess, "run", fake_run)
+    assert loop_module.git_safe_check(tmp_path) is True
+
+
 def test_git_safe_check_not_on_main(loop_module, tmp_path: Path, monkeypatch):
     """Not on main branch should fail."""
     call_count = [0]
@@ -322,6 +362,68 @@ def test_extract_json_from_claude_empty_input(loop_module):
     """Empty input returns None."""
     result = loop_module._extract_json_from_claude("", ["score"])
     assert result is None
+
+
+# ── LLM review fallback tests ──
+
+
+def test_run_llm_review_falls_back_to_plain_json(loop_module, tmp_path, monkeypatch):
+    """When --json-schema fails, run_llm_review falls back to plain-json mode."""
+    prompt_file = tmp_path / "prompt.txt"
+    prompt_file.write_text("Review this skill", encoding="utf-8")
+
+    call_count = [0]
+
+    def fake_run(cmd, **kwargs):
+        from subprocess import CompletedProcess
+
+        call_count[0] += 1
+        # First strategy (json-schema): all attempts fail
+        if "--json-schema" in cmd:
+            return CompletedProcess(cmd, 1, "", "schema error")
+        # Second strategy (plain-json): succeeds
+        response = json.dumps(
+            {"result": json.dumps({"score": 78, "summary": "decent", "findings": []})}
+        )
+        return CompletedProcess(cmd, 0, response, "")
+
+    monkeypatch.setattr(loop_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(loop_module.shutil, "which", lambda x: "/usr/bin/claude")
+
+    result = loop_module.run_llm_review(tmp_path, "test-skill", str(prompt_file))
+    assert result is not None
+    assert result["score"] == 78
+    # json-schema attempts (CLAUDE_RETRIES + 1) + plain-json attempt(s)
+    assert call_count[0] >= loop_module.CLAUDE_RETRIES + 2
+
+
+def test_run_llm_review_plain_json_appends_schema_instruction(loop_module, tmp_path, monkeypatch):
+    """Plain-json fallback appends schema instructions to prompt."""
+    prompt_file = tmp_path / "prompt.txt"
+    prompt_file.write_text("Review this", encoding="utf-8")
+
+    captured_inputs = []
+
+    def fake_run(cmd, **kwargs):
+        from subprocess import CompletedProcess
+
+        captured_inputs.append(kwargs.get("input", ""))
+        if "--json-schema" in cmd:
+            return CompletedProcess(cmd, 1, "", "fail")
+        # Plain-json mode: succeed on first attempt
+        response = json.dumps(
+            {"result": json.dumps({"score": 80, "summary": "ok", "findings": []})}
+        )
+        return CompletedProcess(cmd, 0, response, "")
+
+    monkeypatch.setattr(loop_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(loop_module.shutil, "which", lambda x: "/usr/bin/claude")
+
+    loop_module.run_llm_review(tmp_path, "test-skill", str(prompt_file))
+
+    # The last captured input should have the appended instructions
+    plain_json_inputs = [i for i in captured_inputs if "IMPORTANT: Respond with" in i]
+    assert len(plain_json_inputs) >= 1
 
 
 # ── Log rotation tests ──

@@ -302,8 +302,35 @@ def rotate_logs(project_root: Path) -> None:
 # -- Git safety --
 
 
+_SAFE_DIRTY_PREFIXES = ("reports/", "logs/")
+
+
+def _is_safe_dirty_tree(porcelain_output: str) -> bool:
+    """Return True when all dirty files are in safe (non-source) directories.
+
+    Untracked files (??) are always blocked regardless of path.
+    Tracked changes (M/A/D/R etc.) are allowed only under reports/ or logs/.
+    """
+    for line in porcelain_output.splitlines():
+        if not line.strip():
+            continue
+        status_code = line[:2]
+        filepath = line[3:].strip().split(" -> ")[-1]  # handle renames
+        if status_code == "??":
+            logger.warning("Blocked: untracked file: %s", filepath)
+            return False
+        if not filepath.startswith(_SAFE_DIRTY_PREFIXES):
+            logger.warning("Blocked: non-safe dirty file: %s", filepath)
+            return False
+    return True
+
+
 def git_safe_check(project_root: Path) -> bool:
-    """Verify clean working tree on main branch and pull latest."""
+    """Verify working tree on main branch and pull latest.
+
+    Allows tracked changes in reports/ and logs/ to avoid blocking the
+    pipeline when only output files are dirty.
+    """
     try:
         status = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -313,8 +340,13 @@ def git_safe_check(project_root: Path) -> bool:
             check=True,
         )
         if status.stdout.strip():
-            logger.error("Working tree is dirty. Aborting.")
-            return False
+            if not _is_safe_dirty_tree(status.stdout):
+                logger.error("Working tree has non-safe dirty files. Aborting.")
+                return False
+            logger.info(
+                "Dirty tree contains only safe files, proceeding: %s",
+                [line[3:].strip() for line in status.stdout.strip().splitlines()],
+            )
 
         branch = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],

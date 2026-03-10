@@ -121,7 +121,6 @@ def pytest_runtest_setup(item) -> None:
 
 _BULK_SKIP_GLOBS = [
     "skills/canslim-screener/*",  # requires bs4 (optional dep)
-    "skills/theme-detector/tests/*",  # duplicate basenames vs scripts/tests/
     "skills/theme-detector/scripts/tests/*",  # 27+ pre-existing failures
 ]
 

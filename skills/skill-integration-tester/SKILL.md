@@ -34,7 +34,7 @@ and report broken handoffs. Supports dry-run mode with synthetic fixtures.
 Execute the validation script against the project's CLAUDE.md:
 
 ```bash
-python3 skills/skill-integration-tester/scripts/test_workflows.py \
+python3 skills/skill-integration-tester/scripts/validate_workflows.py \
   --output-dir reports/
 ```
 
@@ -47,7 +47,7 @@ existence, contracts, and naming.
 Target a single workflow by name substring:
 
 ```bash
-python3 skills/skill-integration-tester/scripts/test_workflows.py \
+python3 skills/skill-integration-tester/scripts/validate_workflows.py \
   --workflow "Earnings Momentum" \
   --output-dir reports/
 ```
@@ -58,7 +58,7 @@ Create synthetic fixture JSON files for each skill's expected output and
 validate contract compatibility without real data:
 
 ```bash
-python3 skills/skill-integration-tester/scripts/test_workflows.py \
+python3 skills/skill-integration-tester/scripts/validate_workflows.py \
   --dry-run \
   --output-dir reports/
 ```
@@ -119,7 +119,7 @@ Reports are saved to `reports/` with filenames
 
 ## Resources
 
-- `scripts/test_workflows.py` -- Main validation script
+- `scripts/validate_workflows.py` -- Main validation script
 - `references/workflow_contracts.md` -- Contract definitions and handoff patterns
 
 ## Key Principles

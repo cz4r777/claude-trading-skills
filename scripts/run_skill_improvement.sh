@@ -14,6 +14,8 @@ export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:${HOME}/.local/bin:/usr/local/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}/.." || exit 1
 
+command -v python3 >/dev/null 2>&1 || { echo "python3 not found" >&2; exit 1; }
+
 # Load project-level .envrc (sets GH_TOKEN for the correct GitHub account)
 if command -v direnv &>/dev/null && [ -f .envrc ]; then
     eval "$(direnv export bash 2>/dev/null)"

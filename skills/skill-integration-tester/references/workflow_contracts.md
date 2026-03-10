@@ -99,5 +99,5 @@ When creating a new multi-skill workflow:
 1. Define each skill's output contract (format, fields, pattern)
 2. Define handoff contracts for consecutive steps with data dependencies
 3. Add the contracts to the `SKILL_CONTRACTS` and `HANDOFF_CONTRACTS`
-   dictionaries in `test_workflows.py`
+   dictionaries in `validate_workflows.py`
 4. Run the integration tester to verify the new workflow

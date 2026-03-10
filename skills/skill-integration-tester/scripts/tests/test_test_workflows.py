@@ -1,9 +1,9 @@
-"""Tests for test_workflows.py — Skill Integration Tester."""
+"""Tests for validate_workflows.py — Skill Integration Tester."""
 
 import json
 from pathlib import Path
 
-from test_workflows import (
+from validate_workflows import (
     HANDOFF_CONTRACTS,
     SKILL_CONTRACTS,
     check_naming_conventions,

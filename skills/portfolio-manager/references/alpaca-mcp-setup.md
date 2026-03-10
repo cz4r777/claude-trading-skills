@@ -136,7 +136,7 @@ chmod 600 ~/.alpaca/config.ini
 
 Use the provided test script:
 ```bash
-python3 portfolio-manager/scripts/test_alpaca_connection.py
+python3 skills/portfolio-manager/scripts/check_alpaca_connection.py
 ```
 
 Expected output:

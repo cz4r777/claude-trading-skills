@@ -211,7 +211,7 @@ These references are loaded automatically by the skill as needed during analysis
 Before using the skill, test your Alpaca API connection:
 
 ```bash
-python3 portfolio-manager/scripts/test_alpaca_connection.py
+python3 skills/portfolio-manager/scripts/check_alpaca_connection.py
 ```
 
 Expected output:
@@ -361,7 +361,7 @@ Excessive exposure to single position, sector, or theme that creates elevated po
 **For Issues:**
 - Check `references/` documentation
 - Review troubleshooting section above
-- Test Alpaca connection with `test_alpaca_connection.py`
+- Test Alpaca connection with `check_alpaca_connection.py`
 - Check Alpaca API status: https://status.alpaca.markets/
 
 **For Questions:**

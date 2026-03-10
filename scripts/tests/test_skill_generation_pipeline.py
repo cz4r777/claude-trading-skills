@@ -84,6 +84,30 @@ def test_save_state_trims_history(pipeline_module, tmp_path: Path):
     assert len(loaded["history"]) == pipeline_module.HISTORY_LIMIT
 
 
+# -- Safe dirty tree tests --
+
+
+def test_is_safe_dirty_tree_reports_only(pipeline_module):
+    """Tracked changes only under reports/ and logs/ are safe."""
+    assert pipeline_module._is_safe_dirty_tree(" M reports/summary.md\n M logs/run.log\n") is True
+
+
+def test_is_safe_dirty_tree_blocks_source_files(pipeline_module):
+    """Tracked changes to source files are blocked."""
+    assert pipeline_module._is_safe_dirty_tree(" M scripts/main.py\n") is False
+
+
+def test_is_safe_dirty_tree_blocks_untracked(pipeline_module):
+    """Untracked files are always blocked, even under reports/."""
+    assert pipeline_module._is_safe_dirty_tree("?? reports/new.md\n") is False
+
+
+def test_is_safe_dirty_tree_mixed(pipeline_module):
+    """Mixed safe and unsafe files should block."""
+    output = " M reports/summary.md\n M skills/foo/SKILL.md\n"
+    assert pipeline_module._is_safe_dirty_tree(output) is False
+
+
 # -- Backlog tests --
 
 

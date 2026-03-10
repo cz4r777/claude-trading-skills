@@ -10,14 +10,10 @@ Covers:
 """
 
 import os
-import sys
 import tempfile
 
-# Add scripts directories to path
-SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
-CALCULATORS_DIR = os.path.join(SCRIPTS_DIR, "calculators")
-sys.path.insert(0, SCRIPTS_DIR)
-sys.path.insert(0, CALCULATORS_DIR)
+# Parent scripts directory (for screen_canslim.py path in file-reading tests)
+SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..")
 
 from calculators.institutional_calculator import (
     calculate_institutional_sponsorship,

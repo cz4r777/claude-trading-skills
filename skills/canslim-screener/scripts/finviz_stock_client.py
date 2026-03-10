@@ -22,12 +22,10 @@ from typing import Optional
 try:
     import requests
     from bs4 import BeautifulSoup
-except ImportError:
-    print(
-        "ERROR: required libraries not found. Install with: pip install beautifulsoup4 requests lxml",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+except ImportError as _exc:
+    raise ImportError(
+        "required libraries not found. Install with: pip install beautifulsoup4 requests lxml"
+    ) from _exc
 
 
 class FinvizStockClient:
