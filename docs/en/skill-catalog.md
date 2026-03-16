@@ -229,5 +229,10 @@ A comprehensive catalog of all 43 Claude Trading Skills organized by category. B
 | Data Quality Checker | -- | -- | -- |
 | Dual-Axis Skill Reviewer | -- | -- | -- |
 | Weekly Trade Strategy | -- | -- | -- |
+| Edge Signal Aggregator | -- | -- | -- |
+| Skill Designer | -- | -- | -- |
+| Skill Idea Miner | -- | -- | -- |
+| Skill Integration Tester | -- | -- | -- |
+| Trade Hypothesis Ideator | -- | -- | -- |
 
 "--" means not required. "Optional" means functionality is enhanced but the skill works without it.

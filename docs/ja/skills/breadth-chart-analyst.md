@@ -11,18 +11,184 @@ permalink: /ja/skills/breadth-chart-analyst/
 # Breadth Chart Analyst
 {: .no_toc }
 
-This skill should be used when analyzing market breadth charts, specifically the S&P 500 Breadth Index (200-Day MA based) and the US Stock Market Uptrend Stock Ratio charts. Use this skill when the user provides breadth chart images for analysis, requests market breadth assessment, positioning strategy recommendations, or wants to understand medium-term strategic and short-term tactical market outlook based on breadth indicators. All analysis and output are conducted in English.
+S&P 500 ブレッドスインデックス（200日移動平均線ベース）およびUS株式市場上昇トレンド銘柄比率チャートを分析するスキルです。ユーザーがブレッドスチャート画像を提供して分析を依頼する場合、市場のブレッドス評価、ポジショニング戦略の推奨、またはブレッドス指標に基づく中期戦略・短期戦術的な市場見通しを知りたい場合に使用します。すべての分析とアウトプットは英語で行われます。
 {: .fs-6 .fw-300 }
 
-<span class="badge badge-free">No API</span>
-
-> **Note:** This page has not yet been translated into Japanese.
-> Please refer to the [English version]({{ '/en/skills/breadth-chart-analyst/' | relative_url }}) for the full guide.
-{: .warning }
-
----
+<span class="badge badge-free">API不要</span>
 
 [スキルパッケージをダウンロード (.skill)](https://github.com/tradermonty/claude-trading-skills/raw/main/skill-packages/breadth-chart-analyst.skill){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [GitHubでソースを見る](https://github.com/tradermonty/claude-trading-skills/tree/main/skills/breadth-chart-analyst){: .btn .fs-5 .mb-4 .mb-md-0 }
 
-[English版ガイドを見る]({{ '/en/skills/breadth-chart-analyst/' | relative_url }}){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
+<details open markdown="block">
+  <summary>目次</summary>
+  {: .text-delta }
+- TOC
+{:toc}
+</details>
+
+---
+
+## 1. 概要
+
+2つの補完的な市場ブレッドスチャートの専門分析を可能にするスキルです。戦略的（中長期）および戦術的（短期）の市場視点を提供します。ブレッドスチャート画像を分析し、市場の健全性を評価し、バックテスト済み戦略に基づくトレードシグナルを特定し、ポジショニングの推奨を策定します。すべての思考とアウトプットは英語で行われます。
+
+---
+
+## 2. 使用タイミング
+
+以下の場合に使用します：
+- ユーザーがS&P 500 ブレッドスインデックス（200日MAベース）のチャート画像を提供した場合
+- ユーザーがUS株式市場上昇トレンド銘柄比率のチャート画像を提供した場合
+- ユーザーが市場のブレッドス評価や市場健全性の評価を求めた場合
+- ユーザーがブレッドス指標に基づく中期戦略的ポジショニングについて質問した場合
+- ユーザーがスイングトレーディングのための短期戦術的タイミングシグナルを必要としている場合
+- ユーザーが戦略・戦術を組み合わせた市場見通しを求めた場合
+
+以下の場合には使用しないでください：
+- ユーザーが個別銘柄分析を求めた場合（代わりに `us-stock-analysis` スキルを使用）
+- ブレッドスチャートなしでセクターローテーション分析を必要とする場合（代わりに `sector-analyst` スキルを使用）
+- ユーザーがニュースベースの市場分析を求めた場合（代わりに `market-news-analyst` スキルを使用）
+
+---
+
+## 3. 前提条件
+
+- **チャート画像が必要**: ユーザーは以下のブレッドスチャート画像の一方または両方を提供する必要があります：
+  - チャート1: S&P 500 ブレッドスインデックス（200日MAベース）
+  - チャート2: US株式市場上昇トレンド銘柄比率
+- **APIキー不要**: ユーザー提供の画像を分析するため、外部データソースは不要
+- **言語**: すべての分析とアウトプットは英語で実施
+
+---
+
+## 4. クイックスタート
+
+```bash
+Read: references/breadth_chart_methodology.md
+```
+
+---
+
+## 5. ワークフロー
+
+### ステップ1: チャート画像の受領と分析準備
+
+ユーザーがブレッドスチャート画像を提供した場合：
+
+1. チャート画像の受領を確認
+2. 提供されたチャートを特定：
+   - チャート1のみ（200MAブレッドス）
+   - チャート2のみ（上昇トレンド比率）
+   - 両方のチャート
+3. ユーザーからの特定のフォーカス領域や質問を確認
+4. 体系的な分析を進行
+
+**言語に関する注意**: 以降のすべての思考、分析、アウトプットは英語で行われます。
+
+### ステップ2: ブレッドスチャート手法の読み込み
+
+分析を開始する前に、包括的なブレッドスチャート手法を読み込みます：
+
+```
+Read: references/breadth_chart_methodology.md
+```
+
+このリファレンスには以下の詳細なガイダンスが含まれています：
+- チャート1: 200MAベースのブレッドスインデックスの解釈と戦略
+- チャート2: 上昇トレンド銘柄比率の解釈と戦略
+- シグナルの特定と閾値の意義
+- 戦略ルールとリスク管理
+- 両チャートを組み合わせた最適な意思決定
+- 避けるべき一般的な落とし穴
+
+### ステップ3: サンプルチャートの確認（初回または参考用）
+
+チャートのフォーマットと視覚的要素を理解するために、このスキルに含まれるサンプルチャートを確認します：
+
+```
+View: skills/breadth-chart-analyst/assets/SP500_Breadth_Index_200MA_8MA.jpeg
+View: skills/breadth-chart-analyst/assets/US_Stock_Market_Uptrend_Ratio.jpeg
+```
+
+### ステップ4: チャート1の分析（200MAベースブレッドスインデックス）
+
+チャート1が提供された場合、体系的な分析を実施します：
+
+#### 4.1 現在の数値の読み取り
+
+チャート画像から以下を特定：
+- **現在の8MAレベル**（オレンジ線）: 具体的なパーセンテージ
+- **現在の200MAレベル**（緑線）: 具体的なパーセンテージ
+- **8MAの傾き**: 上昇、下落、または横ばい
+- **200MAの傾き**: 上昇、下落、または横ばい
+- **73%閾値からの距離**: 過熱圏への近さ
+- **23%閾値からの距離**: 極端な売られ過ぎへの近さ
+- **チャート上で確認できる直近の日付**
+
+#### 4.1.5 重要: 最新データポイントの詳細トレンド分析
+
+**このステップは、直近のトレンド変化の誤読を防ぐために必須です。**
+
+チャートの**右端3〜5データポイント**（直近の週）に集中的にフォーカスします。
+
+#### 4.2 シグナルマーカーの特定
+
+以下を探して記録します：
+- **直近の8MAのトラフ（紫▼）**: 日付とレベル
+- **直近の200MAのトラフ（青▼）**: 日付とレベル（期間内に表示されている場合）
+- **直近の200MAのピーク（赤▲）**: 日付とレベル
+
+#### 4.3 市場レジームの評価
+
+数値とパターンに基づき、現在の市場を以下のいずれかに分類：
+- 健全な強気相場
+- 過熱した強気相場
+- 天井圏/分配フェーズ
+- 弱気相場/調整
+- 投げ売り/極端な売られ過ぎ
+- 初期回復
+
+#### 4.4 戦略ポジションの決定
+
+厳格な確認要件でバックテスト済み戦略ルールを適用します：
+
+**買いシグナルの確認**（すべての基準を満たす必要あり）：
+1. トラフの形成: 8MAが明確なトラフ（紫▼）を形成したか？
+2. 反転の開始: 8MAがトラフから上昇し始めたか？
+3. 確認の達成: トラフ後に8MAが2〜3回連続で上昇したか？
+4. 直近の反転なし: ステップ4.1.5の分析に基づき、8MAが現在上昇しているか（下落していないか）？
+5. 持続的な動き: 8MAが反落せずに上昇軌道を維持しているか？
+
+#### 4.5 シナリオの策定
+
+確率見積もり付きの2〜3つのシナリオを作成します。
+
+### ステップ5: チャート2の分析（上昇トレンド銘柄比率）
+
+チャート2が提供された場合、体系的な分析を実施します。
+
+### ステップ6: 統合分析（両チャート提供時）
+
+両方のチャートが提供された場合、戦略的視点と戦術的視点を統合します。4つのシナリオ（両方強気、戦略強気/戦術弱気、戦略弱気/戦術強気、両方弱気）のいずれに該当するかを判定します。
+
+### ステップ7: 英語での分析レポート生成
+
+以下のテンプレート構造を使用して包括的なマークダウンレポートを作成します：
+
+```
+Read and use as template: skills/breadth-chart-analyst/assets/breadth_analysis_template.md
+```
+
+**重要**: すべての分析とアウトプットは英語でなければなりません。
+
+### ステップ8: 品質保証
+
+レポートを完成させる前に、言語、最新データのトレンド分析、トレンド方向の正確性、失敗した反転の確認、具体的な数値、シグナルステータス、戦略との整合性、確率の合計、実行可能性、コンテキスト、リスク管理を検証します。
+
+---
+
+## 6. リソース
+
+**リファレンス:**
+
+- `skills/breadth-chart-analyst/references/breadth_chart_methodology.md`
