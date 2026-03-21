@@ -234,9 +234,9 @@ Each stock receives both a **quality rating** (pattern strength) and an **execut
 
 | Execution State | Meaning | Max Rating |
 |-----------------|---------|------------|
-| Pre-breakout | Near or below pivot (ideal zone) | No cap |
-| Breakout | Within 3% above pivot + volume confirmed | No cap |
-| Early-post-breakout | 0-5% above pivot, volume unconfirmed | No cap |
+| Pre-breakout | Below pivot (ideal entry zone) | No cap |
+| Breakout | 0-3% above pivot + volume confirmed | No cap |
+| Early-post-breakout | 3-5% above pivot, OR 0-3% without volume | Strong VCP |
 | Extended | 5-10% above pivot | Developing VCP |
 | Overextended | >10% above pivot or >50% above SMA200 | Weak VCP |
 | Damaged | Below SMA50 or stop level | No VCP |

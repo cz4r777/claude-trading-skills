@@ -21,10 +21,11 @@ Rating Bands:
   <50:    No VCP        - Not a VCP setup
 
 State Caps:
-  Invalid / Damaged      → max "No VCP"      (setup not actionable)
-  Overextended           → max "Developing VCP"
-  Extended               → max "Weak VCP"
-  Wide-and-Loose pattern → max "Strong VCP"  (Textbook禁止)
+  Invalid / Damaged      → max "No VCP"         (setup not actionable)
+  Overextended           → max "Weak VCP"        (too far to buy safely)
+  Extended               → max "Developing VCP"  (chase risk too high)
+  Early-post-breakout    → max "Strong VCP"      (volume unconfirmed)
+  Wide-and-Loose pattern → max "Developing VCP"  (Textbook/Strong/Good禁止)
 """
 
 from typing import Optional

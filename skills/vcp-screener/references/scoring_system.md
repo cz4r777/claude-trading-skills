@@ -148,13 +148,13 @@ These axes are computed independently and then combined through **State Caps**.
 
 | State | Meaning |
 |-------|---------|
-| `Invalid` | Price below both SMA50 and SMA200 — not a Stage 2 stock |
-| `Damaged` | Price breached last contraction low — pattern invalidated |
-| `Overextended` | Price >50% above SMA200 — extended leader, late-cycle risk |
-| `Extended` | Price >10% above pivot — too far to buy |
-| `Early-post-breakout` | Price 5-10% above pivot with breakout volume — breakout in progress |
-| `Breakout` | Price 0-5% above pivot with breakout volume — valid entry window |
-| `Pre-breakout` | Price within 8% below pivot, no damage, not extended — ideal setup |
+| `Invalid` | Price below SMA50 < SMA200 — not a Stage 2 stock |
+| `Damaged` | Price below last contraction low OR below SMA50 — pattern invalidated |
+| `Overextended` | Price >50% above SMA200 OR >10% above pivot — late-cycle risk |
+| `Extended` | Price 5-10% above pivot — elevated chase risk |
+| `Early-post-breakout` | Price 3-5% above pivot, OR 0-3% above pivot without volume confirmation |
+| `Breakout` | Price 0-3% above pivot with breakout volume confirmation (1.5x+ avg) |
+| `Pre-breakout` | Price below pivot — ideal entry zone |
 
 ### State Caps
 
@@ -219,10 +219,12 @@ A stock is classified as `entry_ready=True` when all of the following conditions
 
 | Condition | Default Threshold | CLI Override |
 |-----------|-------------------|--------------|
+| `execution_state` | Not in (Invalid, Damaged, Overextended, Extended, Early-post-breakout) | — |
 | `valid_vcp` | `True` | `--no-require-valid-vcp` |
 | `distance_from_pivot_pct` | -8.0% to +3.0% | `--max-above-pivot` |
 | `dry_up_ratio` | <= 1.0 | — |
-| `risk_pct` | <= 15.0% | `--max-risk` |
+| `trade_status` | Not "BELOW STOP LEVEL" | — |
+| `risk_pct` | > 0% and <= 15.0% | `--max-risk` |
 
 **Report sections:**
 - **Section A: Pre-Breakout Watchlist** — `entry_ready=True` stocks, sorted by composite score
