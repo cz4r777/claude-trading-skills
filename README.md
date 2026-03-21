@@ -257,6 +257,7 @@ Curated Claude skills for equity investors and traders. Each skill bundles promp
 - **VCP Screener** (`vcp-screener`)
   - Screens S&P 500 stocks for Mark Minervini's Volatility Contraction Pattern (VCP).
   - Identifies Stage 2 uptrend stocks forming tight bases with contracting volatility near breakout pivot points.
+  - Two-axis scoring: separates pattern quality from execution readiness (state caps prevent chasing extended stocks).
   - Multi-stage filtering: Trend Template → VCP Base Detection → Contraction Analysis → Pivot Point Calculation.
   - FMP API required (free tier sufficient for default screening of top 100 candidates).
 

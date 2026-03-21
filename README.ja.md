@@ -234,6 +234,7 @@ English README is available at [`README.md`](README.md).
 - **VCPスクリーナー** (`vcp-screener`)
   - S&P 500銘柄からMark MinerviniのVolatility Contraction Pattern (VCP) をスクリーニング。
   - ブレイクアウトピボットポイント近辺でボラティリティが収縮しているStage 2上昇トレンド銘柄を識別。
+  - 2軸スコアリング: パターン品質とエントリー可能性を分離（State Capsにより延長済み銘柄の追従を防止）。
   - 多段階フィルタリング: トレンドテンプレート → VCPベース検出 → 収縮分析 → ピボットポイント計算。
   - FMP APIキーが必要（無料ティアで上位100候補のデフォルトスクリーニングに十分）。
 

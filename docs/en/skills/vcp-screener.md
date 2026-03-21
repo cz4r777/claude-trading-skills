@@ -102,6 +102,7 @@ python3 skills/vcp-screener/scripts/screen_vcp.py --output-dir reports/
 - Analyzes price data for contraction patterns using ATR-based ZigZag swing detection
 - Identifies successive tightening corrections (T1, T2, T3, etc.)
 - Calculates: contraction depths, contraction ratios, volume dry-up, pivot price
+- **Two-axis scoring** separates pattern quality (composite score) from execution readiness (execution state), preventing strong but extended stocks from receiving buy signals
 - Composite scoring combines trend template score, VCP pattern quality, volume pattern, relative strength, and pivot proximity
 
 ---
@@ -227,7 +228,21 @@ The screener generates:
    - Relative strength rank
    - Pivot price, stop-loss, and risk percentage
 
-**Rating interpretation:**
+**Two-axis output:**
+
+Each stock receives both a **quality rating** (pattern strength) and an **execution state** (entry timing). The final rating is capped by the execution state -- a Textbook-quality pattern that is Overextended will not get a buy signal.
+
+| Execution State | Meaning | Max Rating |
+|-----------------|---------|------------|
+| Pre-breakout | Near or below pivot (ideal zone) | No cap |
+| Breakout | Within 3% above pivot + volume confirmed | No cap |
+| Early-post-breakout | 0-5% above pivot, volume unconfirmed | No cap |
+| Extended | 5-10% above pivot | Developing VCP |
+| Overextended | >10% above pivot or >50% above SMA200 | Weak VCP |
+| Damaged | Below SMA50 or stop level | No VCP |
+| Invalid | Price < SMA50 < SMA200 | No VCP |
+
+**Quality rating bands (before state caps):**
 
 | Rating | Score | Action |
 |--------|-------|--------|
@@ -316,13 +331,16 @@ Stocks with minimal price movement (average true range < 1% of price) are filter
 | `--lookback-days` | No | `120` | VCP pattern lookback window in days |
 | `--ext-threshold` | No | `8.0` | SMA50 distance % where extended penalty starts |
 | `--no-require-valid-vcp` | No | `false` | Do not require valid_vcp for entry-ready |
+| `--max-sma200-extension` | No | `50.0` | Max % above SMA200 before Overextended state |
+| `--wide-and-loose-threshold` | No | `15.0` | Final contraction depth % for wide-and-loose flag |
+| `--strict` | No | `false` | Strict mode: requires 3+ contractions, 7+ days each, ratio 0.60 |
 
 ### Scoring Components
 
 | Component | Weight | Description |
 |-----------|--------|-------------|
-| Trend Template | 30% | Minervini's 7-point Stage 2 check |
-| VCP Pattern | 30% | Contraction quality, depth ratios, count |
-| Volume Pattern | 15% | Dry-up ratio (lower = better supply exhaustion) |
-| Relative Strength | 15% | 52-week performance rank vs universe |
-| Pivot Proximity | 10% | Distance from calculated pivot point |
+| Trend Template | 25% | Minervini's 7-point Stage 2 check |
+| VCP Pattern | 25% | Contraction quality, depth ratios, tightness |
+| Volume Pattern | 20% | Dry-up ratio (lower = better supply exhaustion) |
+| Pivot Proximity | 15% | Distance from calculated pivot point |
+| Relative Strength | 15% | Minervini-weighted performance vs S&P 500 |
