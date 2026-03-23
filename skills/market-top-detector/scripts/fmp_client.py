@@ -24,6 +24,43 @@ except ImportError:
     sys.exit(1)
 
 
+# --- FMP endpoint fallback: stable (new users) -> v3 (legacy users) ---
+
+
+def _stable_quote_url(base, symbols_str, params):
+    """stable/quote?symbol=^GSPC"""
+    params["symbol"] = symbols_str
+    return base, params
+
+
+def _v3_quote_url(base, symbols_str, params):
+    """api/v3/quote/^GSPC"""
+    return f"{base}/{symbols_str}", params
+
+
+def _stable_hist_url(base, symbols_str, params):
+    """stable/historical-price-full?symbol=^GSPC&timeseries=80"""
+    params["symbol"] = symbols_str
+    return base, params
+
+
+def _v3_hist_url(base, symbols_str, params):
+    """api/v3/historical-price-full/^GSPC?timeseries=80"""
+    return f"{base}/{symbols_str}", params
+
+
+_FMP_ENDPOINTS = {
+    "quote": [
+        ("https://financialmodelingprep.com/stable/quote", _stable_quote_url),
+        ("https://financialmodelingprep.com/api/v3/quote", _v3_quote_url),
+    ],
+    "historical": [
+        ("https://financialmodelingprep.com/stable/historical-price-full", _stable_hist_url),
+        ("https://financialmodelingprep.com/api/v3/historical-price-full", _v3_hist_url),
+    ],
+}
+
+
 class FMPClient:
     """Client for Financial Modeling Prep API with rate limiting and caching"""
 
@@ -46,7 +83,9 @@ class FMPClient:
         self.max_retries = 1
         self.api_calls_made = 0
 
-    def _rate_limited_get(self, url: str, params: Optional[dict] = None) -> Optional[dict]:
+    def _rate_limited_get(
+        self, url: str, params: Optional[dict] = None, quiet: bool = False
+    ) -> Optional[dict]:
         if self.rate_limit_reached:
             return None
 
@@ -70,20 +109,73 @@ class FMPClient:
                 if self.retry_count <= self.max_retries:
                     print("WARNING: Rate limit exceeded. Waiting 60 seconds...", file=sys.stderr)
                     time.sleep(60)
-                    return self._rate_limited_get(url, params)
+                    return self._rate_limited_get(url, params, quiet=quiet)
                 else:
                     print("ERROR: Daily API rate limit reached.", file=sys.stderr)
                     self.rate_limit_reached = True
                     return None
             else:
-                print(
-                    f"ERROR: API request failed: {response.status_code} - {response.text[:200]}",
-                    file=sys.stderr,
-                )
+                if not quiet:
+                    print(
+                        f"ERROR: API request failed: {response.status_code} - {response.text[:200]}",
+                        file=sys.stderr,
+                    )
                 return None
         except requests.exceptions.RequestException as e:
             print(f"ERROR: Request exception: {e}", file=sys.stderr)
             return None
+
+    def _request_with_fallback(self, endpoint_key, symbols_str, extra_params=None):
+        """Try stable endpoint first, fall back to v3 for legacy users.
+
+        Returns parsed JSON in v3-compatible shape, or None if all fail.
+        Non-last endpoints use quiet=True to suppress expected 403 stderr.
+        """
+        params = dict(extra_params) if extra_params else {}
+        endpoints = _FMP_ENDPOINTS[endpoint_key]
+        is_single = "," not in symbols_str
+
+        for i, (base_url, url_builder) in enumerate(endpoints):
+            url, final_params = url_builder(base_url, symbols_str, dict(params))
+            is_last = i == len(endpoints) - 1
+            data = self._rate_limited_get(url, final_params, quiet=not is_last)
+            if not data:  # falsy (None, [], {}) — try next endpoint
+                continue
+
+            # Shape validation: reject truthy-but-wrong-shape responses
+            if endpoint_key == "quote":
+                if not isinstance(data, list) or len(data) == 0:
+                    continue  # callers expect non-empty list
+                # Single-symbol: verify returned symbol matches request
+                if is_single and not any(
+                    q.get("symbol", "").replace("-", ".") == symbols_str.replace("-", ".")
+                    for q in data
+                ):
+                    continue
+
+            if endpoint_key == "historical":
+                if not isinstance(data, dict):
+                    continue  # callers expect dict with .get("historical")
+                if "historicalStockList" in data:
+                    # stable batch format -> v3 single format (exact match only)
+                    norm = symbols_str.replace("-", ".")
+                    for entry in data["historicalStockList"]:
+                        if entry.get("symbol", "").replace("-", ".") == norm:
+                            return {
+                                "symbol": entry.get("symbol"),
+                                "historical": entry.get("historical", []),
+                            }
+                    # Symbol not found — this endpoint is no good, try next
+                    continue
+                elif "historical" not in data:
+                    continue  # truthy dict but missing expected key
+                # Single-symbol: verify returned symbol matches request
+                elif is_single and data.get("symbol"):
+                    if data["symbol"].replace("-", ".") != symbols_str.replace("-", "."):
+                        continue
+
+            return data
+        return None
 
     def get_quote(self, symbols: str) -> Optional[list[dict]]:
         """Fetch real-time quote data for one or more symbols (comma-separated)"""
@@ -91,8 +183,7 @@ class FMPClient:
         if cache_key in self.cache:
             return self.cache[cache_key]
 
-        url = f"{self.BASE_URL}/quote/{symbols}"
-        data = self._rate_limited_get(url)
+        data = self._request_with_fallback("quote", symbols)
         if data:
             self.cache[cache_key] = data
         return data
@@ -103,9 +194,7 @@ class FMPClient:
         if cache_key in self.cache:
             return self.cache[cache_key]
 
-        url = f"{self.BASE_URL}/historical-price-full/{symbol}"
-        params = {"timeseries": days}
-        data = self._rate_limited_get(url, params)
+        data = self._request_with_fallback("historical", symbol, {"timeseries": days})
         if data:
             self.cache[cache_key] = data
         return data
