@@ -13,6 +13,8 @@ INTERFACE_VERSION = "edge-finder-candidate/v1"
 SUPPORTED_ENTRY_FAMILIES = {
     "pivot_breakout",
     "gap_up_continuation",
+    "panic_reversal",
+    "news_reaction",
 }
 
 REQUIRED_TOP_LEVEL_KEYS = {

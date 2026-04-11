@@ -75,6 +75,22 @@ DEFAULT_ENTRY_BY_FAMILY = {
         ],
         "trend_filter": ["price > sma_200", "price > sma_50", "sma_50 > sma_200"],
     },
+    "panic_reversal": {
+        "conditions": [
+            "ret_1d <= -0.07",
+            "rel_volume >= 1.8",
+            "close > 0.85 * ma200",
+        ],
+        "trend_filter": ["price > sma_200 * 0.85"],
+    },
+    "news_reaction": {
+        "conditions": [
+            "abs_reaction_1d >= 0.06",
+            "rel_volume >= 2.0",
+            "close_pos >= 0.4",
+        ],
+        "trend_filter": ["validate_follow_through_d2", "volume_confirmation_present"],
+    },
 }
 
 DEFAULT_VCP_DETECTION = {

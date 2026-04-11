@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-EXPORTABLE_FAMILIES = {"pivot_breakout", "gap_up_continuation"}
+DEFAULT_EXPORTABLE_FAMILIES = {"pivot_breakout", "gap_up_continuation"}
 
 # Resolve script paths relative to the skills project root
 # (3 levels up from this script: scripts/ -> edge-pipeline-orchestrator/ -> skills/ -> project root)
@@ -142,11 +142,15 @@ def load_reviews_from_dir(reviews_dir: Path) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def should_export(draft: dict[str, Any]) -> bool:
+def should_export(
+    draft: dict[str, Any],
+    exportable_families: set[str] | None = None,
+) -> bool:
     """Check if a draft is eligible for export."""
-    return (
-        bool(draft.get("export_ready_v1")) and draft.get("entry_family", "") in EXPORTABLE_FAMILIES
+    families = (
+        exportable_families if exportable_families is not None else DEFAULT_EXPORTABLE_FAMILIES
     )
+    return bool(draft.get("export_ready_v1")) and draft.get("entry_family", "") in families
 
 
 def build_export_ticket(draft: dict[str, Any]) -> dict[str, Any]:
@@ -272,6 +276,7 @@ def run_review_loop(
     review_output_base: Path,
     max_iterations: int = MAX_REVIEW_ITERATIONS,
     strict_export: bool = False,
+    exportable_families: set[str] | None = None,
 ) -> ReviewLoopResult:
     """Run the review-revision feedback loop."""
     result = ReviewLoopResult()
@@ -304,6 +309,8 @@ def run_review_loop(
         ]
         if strict_export:
             review_args.append("--strict-export")
+        if exportable_families is not None:
+            review_args += ["--exportable-families", ",".join(sorted(exportable_families))]
         run_stage("review", review_args)
 
         # Load reviews
@@ -328,7 +335,7 @@ def run_review_loop(
                         draft_id=draft_id,
                         file_path=file_path,
                         verdict="PASS",
-                        export_eligible=should_export(draft_data),
+                        export_eligible=should_export(draft_data, exportable_families),
                         confidence_score=confidence,
                     )
                 )
@@ -472,7 +479,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exportable-families",
         default=None,
-        help="Comma-separated list of strategy families eligible for export (overrides default)",
+        help="Comma-separated list of exportable entry families (overrides module default)",
     )
     return parser.parse_args()
 
@@ -482,8 +489,9 @@ def main() -> int:
     global EXPORTABLE_FAMILIES
     args = parse_args()
 
+    exportable_families: set[str] | None = None
     if args.exportable_families:
-        EXPORTABLE_FAMILIES = set(args.exportable_families.split(","))
+        exportable_families = {f.strip() for f in args.exportable_families.split(",") if f.strip()}
 
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -583,6 +591,8 @@ def main() -> int:
                 concepts_args += ["--overlap-threshold", str(args.overlap_threshold)]
             if args.no_dedup:
                 concepts_args += ["--no-dedup"]
+            if args.exportable_families:
+                concepts_args += ["--exportable-families", args.exportable_families]
             run_stage("concepts", concepts_args)
             concepts_output = concepts_output_path
             manifest["stages"]["concepts"] = {
@@ -607,6 +617,8 @@ def main() -> int:
                 "--exportable-tickets-dir",
                 str(exportable_tickets_dir),
             ]
+            if args.exportable_families:
+                drafts_args += ["--exportable-families", args.exportable_families]
             run_stage("drafts", drafts_args)
             drafts_dir = drafts_output
             manifest["stages"]["drafts"] = {"status": "completed", "output": str(drafts_output)}
@@ -622,6 +634,7 @@ def main() -> int:
             review_output_base=output_dir,
             max_iterations=args.max_review_iterations,
             strict_export=args.strict_export,
+            exportable_families=exportable_families,
         )
 
         manifest["stages"]["review_loop"] = {
@@ -648,7 +661,7 @@ def main() -> int:
                     skipped.append(td.draft_id)
                     continue
 
-                if should_export(draft_data):
+                if should_export(draft_data, exportable_families):
                     ticket_id = export_draft(
                         draft=draft_data,
                         draft_path=td.file_path,
@@ -665,7 +678,7 @@ def main() -> int:
                 draft_data = (
                     yaml.safe_load(td.file_path.read_text()) if td.file_path.exists() else {}
                 )
-                if isinstance(draft_data, dict) and should_export(draft_data):
+                if isinstance(draft_data, dict) and should_export(draft_data, exportable_families):
                     exported.append(td.draft_id)
                 else:
                     skipped.append(td.draft_id)

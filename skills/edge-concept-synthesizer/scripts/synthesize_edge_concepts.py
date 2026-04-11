@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-EXPORTABLE_FAMILIES = {"pivot_breakout", "gap_up_continuation"}
+DEFAULT_EXPORTABLE_FAMILIES = {"pivot_breakout", "gap_up_continuation"}
 
 HYPOTHESIS_TO_TITLE = {
     "breakout": "Participation-backed trend breakout",
@@ -167,6 +167,7 @@ def infer_hypothesis_type(hint: dict[str, Any]) -> str:
 def promote_hints_to_tickets(
     hints: list[dict[str, Any]],
     synthetic_priority: float,
+    exportable_families: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Promote qualifying hints to synthetic tickets."""
     tickets: list[dict[str, Any]] = []
@@ -179,8 +180,11 @@ def promote_hints_to_tickets(
         mechanism = str(hint.get("mechanism_tag", "")).strip() or "uncertain"
         regime = str(hint.get("regime_bias", "")).strip() or "Unknown"
 
+        families = (
+            exportable_families if exportable_families is not None else DEFAULT_EXPORTABLE_FAMILIES
+        )
         entry_family_raw = hint.get("preferred_entry_family")
-        if isinstance(entry_family_raw, str) and entry_family_raw in EXPORTABLE_FAMILIES:
+        if isinstance(entry_family_raw, str) and entry_family_raw in families:
             entry_family = entry_family_raw
         else:
             entry_family = "research_only"
@@ -325,10 +329,16 @@ def cluster_key(ticket: dict[str, Any]) -> tuple[str, str, str]:
     return hypothesis, mechanism, regime
 
 
-def choose_recommended_entry_family(entry_counter: Counter[str]) -> str | None:
+def choose_recommended_entry_family(
+    entry_counter: Counter[str],
+    exportable_families: set[str] | None = None,
+) -> str | None:
     """Choose recommended exportable entry family from distribution."""
+    families = (
+        exportable_families if exportable_families is not None else DEFAULT_EXPORTABLE_FAMILIES
+    )
     for family, _ in entry_counter.most_common():
-        if family in EXPORTABLE_FAMILIES:
+        if family in families:
             return family
     return None
 
@@ -375,6 +385,7 @@ def build_concept(
     key: tuple[str, str, str],
     tickets: list[dict[str, Any]],
     hints: list[dict[str, Any]],
+    exportable_families: set[str] | None = None,
 ) -> dict[str, Any]:
     """Build one concept payload from clustered tickets."""
     hypothesis, mechanism, regime = key
@@ -412,8 +423,11 @@ def build_concept(
         for condition in ticket_conditions(ticket):
             condition_counter[condition] += 1
 
-    recommended_entry_family = choose_recommended_entry_family(entry_counter)
-    export_ready_v1 = recommended_entry_family in EXPORTABLE_FAMILIES
+    families = (
+        exportable_families if exportable_families is not None else DEFAULT_EXPORTABLE_FAMILIES
+    )
+    recommended_entry_family = choose_recommended_entry_family(entry_counter, families)
+    export_ready_v1 = recommended_entry_family in families
 
     concept_id = sanitize_identifier(f"edge_concept_{hypothesis}_{mechanism}_{regime}")
     title = HYPOTHESIS_TO_TITLE.get(hypothesis, f"{hypothesis} concept")
@@ -492,7 +506,11 @@ def condition_overlap_ratio(conds_a: list[str], conds_b: list[str]) -> float:
     return intersection / min(len(set_a), len(set_b))
 
 
-def merge_concepts(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
+def merge_concepts(
+    primary: dict[str, Any],
+    secondary: dict[str, Any],
+    exportable_families: set[str] | None = None,
+) -> dict[str, Any]:
     """Merge two concepts.  The one with more tickets becomes *primary*.
 
     Returns a new concept dict with combined support and evidence.
@@ -546,8 +564,11 @@ def merge_concepts(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[s
     # Entry family: primary preferred, fallback to secondary
     p_family = primary.get("strategy_design", {}).get("recommended_entry_family")
     s_family = secondary.get("strategy_design", {}).get("recommended_entry_family")
+    families = (
+        exportable_families if exportable_families is not None else DEFAULT_EXPORTABLE_FAMILIES
+    )
     recommended = p_family if p_family is not None else s_family
-    export_ready = recommended in EXPORTABLE_FAMILIES if recommended else False
+    export_ready = recommended in families if recommended else False
 
     # Evidence: ticket_ids union
     p_ticket_ids = list(primary.get("evidence", {}).get("ticket_ids", []))
@@ -616,6 +637,7 @@ def merge_concepts(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[s
 def deduplicate_concepts(
     concepts: list[dict[str, Any]],
     overlap_threshold: float = 0.75,
+    exportable_families: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Greedy pairwise deduplication within same hypothesis_type.
 
@@ -641,7 +663,7 @@ def deduplicate_concepts(
             conds_a = current.get("support", {}).get("representative_conditions", [])
             conds_b = candidate.get("support", {}).get("representative_conditions", [])
             if condition_overlap_ratio(conds_a, conds_b) > overlap_threshold:
-                current = merge_concepts(current, candidate)
+                current = merge_concepts(current, candidate, exportable_families)
                 merged_indices.add(j)
                 merge_count += 1
         result.append(current)
@@ -699,6 +721,11 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Disable concept deduplication",
     )
+    parser.add_argument(
+        "--exportable-families",
+        default=None,
+        help="Comma-separated list of exportable entry families (overrides module default)",
+    )
     return parser.parse_args()
 
 
@@ -708,6 +735,10 @@ def main() -> int:
     tickets_dir = Path(args.tickets_dir).resolve()
     hints_path = Path(args.hints).resolve() if args.hints else None
     output_path = Path(args.output).resolve()
+
+    ef_override: set[str] | None = None
+    if args.exportable_families:
+        ef_override = {f.strip() for f in args.exportable_families.split(",") if f.strip()}
 
     if not tickets_dir.exists():
         print(f"[ERROR] tickets dir not found: {tickets_dir}")
@@ -731,6 +762,7 @@ def main() -> int:
             synthetic_tickets = promote_hints_to_tickets(
                 hints=hints,
                 synthetic_priority=args.synthetic_priority,
+                exportable_families=ef_override,
             )
             if args.max_synthetic_ratio is not None:
                 synthetic_tickets = cap_synthetic_tickets(
@@ -751,11 +783,17 @@ def main() -> int:
         for key, cluster_tickets in grouped.items():
             if len(cluster_tickets) < max(args.min_ticket_support, 1):
                 continue
-            concepts.append(build_concept(key=key, tickets=cluster_tickets, hints=hints))
+            concepts.append(
+                build_concept(
+                    key=key, tickets=cluster_tickets, hints=hints, exportable_families=ef_override
+                )
+            )
 
         # Deduplication
         if not args.no_dedup:
-            concepts, dedup_merged_count = deduplicate_concepts(concepts, args.overlap_threshold)
+            concepts, dedup_merged_count = deduplicate_concepts(
+                concepts, args.overlap_threshold, ef_override
+            )
         else:
             dedup_merged_count = 0
 

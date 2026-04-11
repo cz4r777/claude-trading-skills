@@ -13,7 +13,12 @@ import yaml
 
 # --- Constants ---
 
-EXPORTABLE_FAMILIES = {"pivot_breakout", "gap_up_continuation"}
+DEFAULT_EXPORTABLE_FAMILIES = {
+    "pivot_breakout",
+    "gap_up_continuation",
+    "panic_reversal",
+    "news_reaction",
+}
 
 ARCHETYPE_CATALOG = {
     "trend_following_breakout": {
@@ -570,7 +575,7 @@ def _build_base_draft(
     """Build base pivot draft from archetype defaults."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     entry_family = arch["entry_family"]
-    export_ready = entry_family in EXPORTABLE_FAMILIES
+    export_ready = entry_family in DEFAULT_EXPORTABLE_FAMILIES
 
     return {
         "id": proposal_id,
@@ -675,7 +680,7 @@ def rank_and_select(
 def build_export_ticket_if_eligible(draft: dict[str, Any]) -> dict[str, Any] | None:
     """Build export ticket if entry_family is exportable. Returns None otherwise."""
     entry_family = draft.get("entry_family", "")
-    if entry_family not in EXPORTABLE_FAMILIES:
+    if entry_family not in DEFAULT_EXPORTABLE_FAMILIES:
         return None
 
     ticket_id = sanitize_identifier(draft["id"].replace("pivot_", "edge_"))
@@ -732,9 +737,9 @@ def _validate_ticket_minimal(ticket: dict[str, Any]) -> list[str]:
             errors.append(f"ticket.{key} must be a non-empty string")
 
     entry_family = ticket.get("entry_family")
-    if isinstance(entry_family, str) and entry_family not in EXPORTABLE_FAMILIES:
+    if isinstance(entry_family, str) and entry_family not in DEFAULT_EXPORTABLE_FAMILIES:
         errors.append(
-            f"ticket.entry_family must be one of: {', '.join(sorted(EXPORTABLE_FAMILIES))}"
+            f"ticket.entry_family must be one of: {', '.join(sorted(DEFAULT_EXPORTABLE_FAMILIES))}"
         )
 
     # Mirror candidate_contract validation constraints
@@ -776,7 +781,7 @@ def write_outputs(
 
     for draft in selected:
         entry_family = draft.get("entry_family", "")
-        is_exportable = entry_family in EXPORTABLE_FAMILIES
+        is_exportable = entry_family in DEFAULT_EXPORTABLE_FAMILIES
 
         # Remove pivot_metadata from the YAML file (store separately)
         pivot_meta = draft.pop("pivot_metadata", {})
@@ -913,7 +918,7 @@ def _build_report(
         scores = meta.get("scores", {})
         category = (
             "exportable"
-            if draft.get("entry_family", "") in EXPORTABLE_FAMILIES
+            if draft.get("entry_family", "") in DEFAULT_EXPORTABLE_FAMILIES
             else "research_only"
         )
         lines.append(

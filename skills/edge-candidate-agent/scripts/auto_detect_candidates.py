@@ -28,25 +28,29 @@ REQUIRED_OHLCV_COLUMNS = {
 ENTRY_FAMILY_TO_HYPOTHESIS = {
     "pivot_breakout": "breakout",
     "gap_up_continuation": "earnings_drift",
+    "panic_reversal": "panic_reversal",
+    "news_reaction": "news_reaction",
 }
 
 RESEARCH_ONLY_HYPOTHESES = {
-    "panic_reversal",
     "regime_shift",
     "sector_x_stock",
     "calendar_anomaly",
-    "news_reaction",
     "futures_trigger",
 }
 
 FAMILY_NAME = {
     "pivot_breakout": "Pivot Breakout",
     "gap_up_continuation": "Gap-Up Continuation",
+    "panic_reversal": "Panic Reversal",
+    "news_reaction": "News Reaction",
 }
 
 DEFAULT_MECHANISM_TAG = {
     "pivot_breakout": "behavior",
     "gap_up_continuation": "structure",
+    "panic_reversal": "behavior",
+    "news_reaction": "behavior",
 }
 
 HINT_KEYWORDS = {
@@ -65,6 +69,22 @@ HINT_KEYWORDS = {
         "post-earnings",
         "follow-through",
         "drift",
+    ],
+    "panic_reversal": [
+        "reversal",
+        "capitulation",
+        "panic",
+        "washout",
+        "selloff",
+        "oversold",
+    ],
+    "news_reaction": [
+        "news",
+        "reaction",
+        "event",
+        "catalyst",
+        "extreme gap",
+        "binary",
     ],
 }
 
@@ -314,6 +334,12 @@ def build_ticket_payload(
         "matched_hints": candidate.get("matched_hints", []),
     }
 
+    if hypothesis_type == "news_reaction":
+        observation["abs_reaction_1d"] = round(abs(float(candidate.get("reaction_1d", 0))), 4)
+        observation["reaction_direction"] = (
+            "up" if float(candidate.get("reaction_1d", 0)) > 0 else "down"
+        )
+
     if entry_family == "pivot_breakout":
         hypothesis_sentence = (
             "if breakout above prior 20-day high with elevated relative volume, "
@@ -323,6 +349,16 @@ def build_ticket_payload(
         hypothesis_sentence = (
             "if earnings-style gap-up with strong close and volume confirmation, "
             "then 10-40 day drift remains positive"
+        )
+    elif entry_family == "panic_reversal":
+        hypothesis_sentence = (
+            "if extreme downside move occurs with volume shock but long-term trend is not broken, "
+            "then 3-10 day rebound probability increases"
+        )
+    elif entry_family == "news_reaction":
+        hypothesis_sentence = (
+            "if news reaction magnitude is extreme relative to baseline, "
+            "then post-event drift or reversal edge may emerge"
         )
     else:
         hypothesis_sentence = str(
@@ -967,14 +1003,14 @@ def scan_reversal_candidates(
     for _, row in subset.iterrows():
         symbol = str(row["symbol"]).upper()
         row_dict = row.to_dict()
-        boost, matched_hints = hint_match_boost(symbol, "gap_up_continuation", hints)
+        boost, matched_hints = hint_match_boost(symbol, "panic_reversal", hints)
         score = score_reversal_candidate(
             row_dict, regime_label=regime_label, hint_boost=boost * 0.6
         )
         candidates.append(
             {
                 "symbol": symbol,
-                "entry_family": None,
+                "entry_family": "panic_reversal",
                 "hypothesis_type": "panic_reversal",
                 "priority_score": score,
                 "holding_horizon": "5D",
@@ -988,7 +1024,7 @@ def scan_reversal_candidates(
                 "rs_rank_pct": float(row.get("rs_rank_pct", np.nan)),
                 "mechanism_tag": "behavior",
                 "matched_hints": matched_hints,
-                "conditions": ["ret_1d <= -7%", "rel_volume >= 1.8", "close > 0.85 * ma200"],
+                "conditions": ["ret_1d <= -0.07", "rel_volume >= 1.8", "close > 0.85 * ma200"],
                 "trend_filter": ["avoid fresh breakdown regimes unless reversal setup confirms"],
                 "rationale": [
                     "Extreme down move with participation often leads to short-horizon snapback.",
@@ -1282,6 +1318,7 @@ def read_optional_table(path: Path | None) -> Any | None:
 def scan_news_reaction_candidates(
     news_table: Any | None,
     target_date: date,
+    tradable: Any | None = None,
     top_n: int = 4,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Detect candidates from optional news-reaction table."""
@@ -1303,6 +1340,14 @@ def scan_news_reaction_candidates(
     if day.empty:
         return [], True
 
+    # Join with tradable to get rel_volume, close_pos, atr_pct
+    if tradable is not None:
+        tradable_cols = tradable[["symbol"]].copy()
+        for col in ("rel_volume", "close_pos", "atr_pct"):
+            if col in tradable.columns:
+                tradable_cols[col] = tradable[col]
+        day = day.merge(tradable_cols, on="symbol", how="left")
+
     day["abs_reaction"] = day["reaction_1d"].abs()
     out: list[dict[str, Any]] = []
     for _, row in day.sort_values("abs_reaction", ascending=False).head(max(top_n, 0)).iterrows():
@@ -1311,14 +1356,18 @@ def scan_news_reaction_candidates(
         out.append(
             {
                 "symbol": str(row["symbol"]),
-                "entry_family": None,
+                "entry_family": "news_reaction",
                 "hypothesis_type": "news_reaction",
                 "priority_score": round(clamp(score), 2),
                 "holding_horizon": "10D",
                 "mechanism_tag": "behavior",
                 "description": "News reaction candidate from external event table.",
-                "conditions": [f"reaction_1d={round(reaction, 4)}"],
-                "trend_filter": ["validate with follow-through and volume confirmation"],
+                "conditions": [
+                    "abs_reaction_1d >= 0.06",
+                    "rel_volume >= 2.0",
+                    "close_pos >= 0.4",
+                ],
+                "trend_filter": ["validate_follow_through_d2", "volume_confirmation_present"],
                 "rationale": [
                     "Event-driven over/under-reaction can form short-horizon continuation or mean-reversion edges.",
                 ],
@@ -1326,6 +1375,7 @@ def scan_news_reaction_candidates(
                     "if news reaction magnitude is extreme relative to baseline, "
                     "then post-event drift or reversal edge may emerge"
                 ),
+                "reaction_1d": reaction,
             }
         )
     return out, True
@@ -1690,7 +1740,7 @@ def main() -> int:
         skipped_modules: list[str] = []
         research_ticket_seeds: list[dict[str, Any]] = []
 
-        research_ticket_seeds.extend(
+        exportable_ticket_seeds.extend(
             scan_reversal_candidates(
                 tradable=tradable,
                 regime_label=regime_label,
@@ -1726,6 +1776,7 @@ def main() -> int:
         news_candidates, news_available = scan_news_reaction_candidates(
             news_table=news_table,
             target_date=resolved_date,
+            tradable=tradable,
             top_n=max(args.top_research_n, 0),
         )
         research_ticket_seeds.extend(news_candidates)

@@ -461,7 +461,7 @@ class TestCrossValidation:
         spec.loader.exec_module(self.contract_mod)
 
     def test_exportable_families_match_supported_entry_families(self):
-        assert gp.EXPORTABLE_FAMILIES == self.contract_mod.SUPPORTED_ENTRY_FAMILIES
+        assert gp.DEFAULT_EXPORTABLE_FAMILIES == self.contract_mod.SUPPORTED_ENTRY_FAMILIES
 
     def test_required_validation_fields_consistent(self):
         """The fields validated by _validate_ticket_minimal must match

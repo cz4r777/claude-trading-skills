@@ -22,7 +22,7 @@ import yaml
 # Constants
 # ---------------------------------------------------------------------------
 
-EXPORTABLE_FAMILIES = {"pivot_breakout", "gap_up_continuation"}
+DEFAULT_EXPORTABLE_FAMILIES = {"pivot_breakout", "gap_up_continuation"}
 
 WEIGHTS: dict[str, int] = {
     "C1_edge_plausibility": 20,
@@ -367,23 +367,26 @@ def evaluate_c6(draft: dict) -> ReviewFinding:
     )
 
 
-def evaluate_c7(draft: dict) -> ReviewFinding:
+def evaluate_c7(draft: dict, exportable_families: set[str] | None = None) -> ReviewFinding:
     """C7: Execution Realism."""
+    families = (
+        exportable_families if exportable_families is not None else DEFAULT_EXPORTABLE_FAMILIES
+    )
     entry = draft.get("entry", {})
     conditions = entry.get("conditions", []) if isinstance(entry.get("conditions"), list) else []
     has_volume = any("volume" in str(c).lower() for c in conditions)
 
     export_ready = bool(draft.get("export_ready_v1", False))
     family = str(draft.get("entry_family", ""))
-    bad_export = export_ready and family not in EXPORTABLE_FAMILIES
+    bad_export = export_ready and family not in families
 
     if bad_export:
         return ReviewFinding(
             criterion="C7_execution_realism",
             score=10,
             severity="fail",
-            reason=f"export_ready_v1=true but entry_family='{family}' not in EXPORTABLE_FAMILIES.",
-            revision_instruction=f"Set export_ready_v1=false or change entry_family to one of {sorted(EXPORTABLE_FAMILIES)}.",
+            reason=f"export_ready_v1=true but entry_family='{family}' not in exportable families.",
+            revision_instruction=f"Set export_ready_v1=false or change entry_family to one of {sorted(families)}.",
         )
     if not has_volume:
         return ReviewFinding(
@@ -472,16 +475,23 @@ def determine_verdict(findings: list[ReviewFinding], confidence: int) -> str:
     return "REVISE"
 
 
-def is_export_eligible(draft: dict, verdict: str) -> bool:
+def is_export_eligible(
+    draft: dict, verdict: str, exportable_families: set[str] | None = None
+) -> bool:
     """Check if draft qualifies for pipeline export."""
+    families = (
+        exportable_families if exportable_families is not None else DEFAULT_EXPORTABLE_FAMILIES
+    )
     return (
         verdict == "PASS"
         and bool(draft.get("export_ready_v1", False))
-        and str(draft.get("entry_family", "")) in EXPORTABLE_FAMILIES
+        and str(draft.get("entry_family", "")) in families
     )
 
 
-def review_draft(draft: dict, *, strict_export: bool = False) -> DraftReview:
+def review_draft(
+    draft: dict, *, strict_export: bool = False, exportable_families: set[str] | None = None
+) -> DraftReview:
     """Review a single strategy draft.
 
     When *strict_export* is True, export-eligible drafts that have any
@@ -489,10 +499,12 @@ def review_draft(draft: dict, *, strict_export: bool = False) -> DraftReview:
     warnings must be resolved before export.
     """
     draft_id = str(draft.get("id", "unknown"))
-    findings = [ev(draft) for ev in ALL_EVALUATORS]
+    findings = [
+        ev(draft, exportable_families) if ev is evaluate_c7 else ev(draft) for ev in ALL_EVALUATORS
+    ]
     confidence = compute_confidence_score(findings)
     verdict = determine_verdict(findings, confidence)
-    export_ok = is_export_eligible(draft, verdict)
+    export_ok = is_export_eligible(draft, verdict, exportable_families)
 
     # Strict export: export-eligible PASS with any warn → REVISE
     if strict_export and verdict == "PASS" and export_ok:
@@ -651,6 +663,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Export-eligible drafts with any warn finding get REVISE instead of PASS",
     )
+    parser.add_argument(
+        "--exportable-families",
+        default=None,
+        help="Comma-separated list of exportable entry families (overrides module default)",
+    )
     return parser.parse_args(argv)
 
 
@@ -658,6 +675,10 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     args = parse_args(argv)
     output_dir = Path(args.output_dir).resolve()
+
+    ef_override: set[str] | None = None
+    if args.exportable_families:
+        ef_override = {f.strip() for f in args.exportable_families.split(",") if f.strip()}
 
     try:
         if args.drafts_dir:
@@ -676,7 +697,10 @@ def main(argv: list[str] | None = None) -> int:
         if not drafts:
             raise ReviewError("No valid drafts to review.")
 
-        reviews = [review_draft(d, strict_export=args.strict_export) for d in drafts]
+        reviews = [
+            review_draft(d, strict_export=args.strict_export, exportable_families=ef_override)
+            for d in drafts
+        ]
         output = build_output(source, len(drafts), reviews)
 
         output_dir.mkdir(parents=True, exist_ok=True)

@@ -550,7 +550,9 @@ def _make_merge_concept(
         "strategy_design": {
             "playbooks": ["test_playbook"],
             "recommended_entry_family": entry_family,
-            "export_ready_v1": entry_family in sec.EXPORTABLE_FAMILIES if entry_family else False,
+            "export_ready_v1": entry_family in sec.DEFAULT_EXPORTABLE_FAMILIES
+            if entry_family
+            else False,
         },
         "evidence": evidence,
     }

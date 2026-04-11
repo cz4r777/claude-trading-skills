@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-EXPORTABLE_FAMILIES = {"pivot_breakout", "gap_up_continuation"}
+DEFAULT_EXPORTABLE_FAMILIES = {"pivot_breakout", "gap_up_continuation"}
 
 ENTRY_TEMPLATE = {
     "pivot_breakout": {
@@ -36,6 +36,28 @@ ENTRY_TEMPLATE = {
             "price > sma_200",
             "price > sma_50",
             "sma_50 > sma_200",
+        ],
+    },
+    "panic_reversal": {
+        "conditions": [
+            "ret_1d <= -0.07",
+            "rel_volume >= 1.8",
+            "close > 0.85 * ma200",
+        ],
+        "trend_filter": [
+            "price > sma_200 * 0.85",
+            "no_fresh_breakdown_below_ma200",
+        ],
+    },
+    "news_reaction": {
+        "conditions": [
+            "abs_reaction_1d >= 0.06",
+            "rel_volume >= 2.0",
+            "close_pos >= 0.4",
+        ],
+        "trend_filter": [
+            "validate_follow_through_d2",
+            "volume_confirmation_present",
         ],
     },
 }
@@ -192,10 +214,18 @@ def load_concepts(path: Path) -> list[dict[str, Any]]:
     return out
 
 
-def resolve_variants(concept: dict[str, Any], variants_per_concept: int) -> list[str]:
+def resolve_variants(
+    concept: dict[str, Any], variants_per_concept: int, exportable_families: set[str] | None = None
+) -> list[str]:
     """Choose draft variants for a concept."""
     strategy_design = concept.get("strategy_design", {})
     export_ready = bool(strategy_design.get("export_ready_v1"))
+
+    # Re-check recommended family against override when provided
+    if export_ready and exportable_families is not None:
+        recommended = strategy_design.get("recommended_entry_family")
+        if recommended not in exportable_families:
+            export_ready = False
 
     if export_ready:
         variants = ["core", "conservative"]
@@ -220,6 +250,7 @@ def build_draft(
     variant: str,
     risk_profile: str,
     as_of: str | None,
+    exportable_families: set[str] | None = None,
 ) -> dict[str, Any]:
     """Build one strategy draft from concept + variant."""
     concept_id = str(concept.get("id"))
@@ -272,7 +303,15 @@ def build_draft(
         "hypothesis_type": hypothesis_type,
         "mechanism_tag": mechanism_tag,
         "regime": regime,
-        "export_ready_v1": bool(export_ready and entry_family in EXPORTABLE_FAMILIES),
+        "export_ready_v1": bool(
+            export_ready
+            and entry_family
+            in (
+                exportable_families
+                if exportable_families is not None
+                else DEFAULT_EXPORTABLE_FAMILIES
+            )
+        ),
         "entry_family": entry_family,
         "entry": {
             "conditions": merged_conditions,
@@ -365,6 +404,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional directory to write exportable ticket YAML files",
     )
+    parser.add_argument(
+        "--exportable-families",
+        default=None,
+        help="Comma-separated list of exportable entry families (overrides module default)",
+    )
     return parser.parse_args()
 
 
@@ -376,6 +420,10 @@ def main() -> int:
     exportable_tickets_dir = (
         Path(args.exportable_tickets_dir).resolve() if args.exportable_tickets_dir else None
     )
+
+    ef_override: set[str] | None = None
+    if args.exportable_families:
+        ef_override = {f.strip() for f in args.exportable_families.split(",") if f.strip()}
 
     if not concepts_path.exists():
         print(f"[ERROR] concepts file not found: {concepts_path}")
@@ -398,7 +446,9 @@ def main() -> int:
 
         for concept in concepts:
             variants = resolve_variants(
-                concept=concept, variants_per_concept=args.variants_per_concept
+                concept=concept,
+                variants_per_concept=args.variants_per_concept,
+                exportable_families=ef_override,
             )
             for variant in variants:
                 draft = build_draft(
@@ -406,6 +456,7 @@ def main() -> int:
                     variant=variant,
                     risk_profile=args.risk_profile,
                     as_of=as_of,
+                    exportable_families=ef_override,
                 )
                 draft_path = output_dir / f"{draft['id']}.yaml"
                 draft_path.write_text(yaml.safe_dump(draft, sort_keys=False))

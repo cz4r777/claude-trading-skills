@@ -14,7 +14,12 @@ from typing import Any
 
 import yaml
 
-SUPPORTED_ENTRY_FAMILIES = {"pivot_breakout", "gap_up_continuation"}
+SUPPORTED_ENTRY_FAMILIES = {
+    "pivot_breakout",
+    "gap_up_continuation",
+    "panic_reversal",
+    "news_reaction",
+}
 
 
 class HintExtractionError(Exception):
