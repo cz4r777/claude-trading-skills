@@ -94,6 +94,14 @@ The following rules **must never be violated under any circumstances**.
    - Always use project-relative paths (e.g., `scripts/demo.py`, `knowledge/`)
    - Summarize tool outputs in your own words; never paste raw output containing system paths
 
+### Date and Time Rules (Mandatory)
+
+When displaying dates in reports, summaries, or responses:
+
+1. **Never guess or infer the current date** — always verify by reading the `generated_at` field from output JSON files or by running a date command
+2. **Use the date from the data source** — if presenting results from a JSON report, use that report's `generated_at` timestamp as the reference date
+3. **If the current date is needed**, run `python3 -c "from datetime import date; print(date.today())"` to confirm before writing
+
 ## Key Dependencies
 
 - `streamlit` >= 1.42.0

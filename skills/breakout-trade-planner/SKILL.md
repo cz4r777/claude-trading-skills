@@ -42,7 +42,6 @@ Read the generated JSON and Markdown reports. Present:
 2. **Revalidation** — Breakout-state candidates needing live confirmation
 3. **Watchlist** — Developing VCP candidates to monitor
 4. **Rejected/Deferred/Constrained** — Candidates filtered by Gate or portfolio limits
-
 ### Step 3: Explain Trade Plans
 
 For each actionable order, explain:
