@@ -29,7 +29,7 @@ import requests
 class FMPEarningsCalendar:
     """FMP Earnings Calendar API client"""
 
-    BASE_URL = "https://financialmodelingprep.com/api/v3"
+    BASE_URL = "https://financialmodelingprep.com/stable"
     MIN_MARKET_CAP = 2_000_000_000  # $2B
     US_EXCHANGES = ["NYSE", "NASDAQ", "AMEX", "NYSEArca", "BATS", "NMS", "NGM", "NCM"]
 
@@ -55,12 +55,12 @@ class FMPEarningsCalendar:
         Returns:
             List of earnings announcements or None on error
         """
-        url = f"{self.BASE_URL}/earning_calendar"
-        params = {"from": start_date, "to": end_date}
+        url = f"{self.BASE_URL}/earnings-calendar"
+        params = {"from": start_date, "to": end_date, "apikey": self.api_key}
 
         try:
             response = requests.get(
-                url, params=params, headers={"apikey": self.api_key}, timeout=30
+                url, params=params, timeout=30
             )
 
             if response.status_code == 401:
@@ -110,32 +110,27 @@ class FMPEarningsCalendar:
             Dictionary mapping symbol to profile data
         """
         profiles = {}
-        batch_size = 100  # FMP allows batch requests
 
         print(f"✓ Fetching profiles for {len(symbols)} companies...", file=sys.stderr)
 
-        for i in range(0, len(symbols), batch_size):
-            batch = symbols[i : i + batch_size]
-            symbols_str = ",".join(batch)
-
-            url = f"{self.BASE_URL}/profile/{symbols_str}"
-            params = {}
+        for i, symbol in enumerate(symbols):
+            url = f"{self.BASE_URL}/profile"
+            params = {"symbol": symbol, "apikey": self.api_key}
 
             try:
-                response = requests.get(
-                    url, params=params, headers={"apikey": self.api_key}, timeout=30
-                )
+                response = requests.get(url, params=params, timeout=30)
                 response.raise_for_status()
 
-                for profile in response.json():
-                    if isinstance(profile, dict):
-                        profiles[profile.get("symbol")] = profile
+                data = response.json()
+                if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+                    profiles[data[0].get("symbol")] = data[0]
 
-                print(f"  ✓ Batch {i // batch_size + 1}: {len(batch)} profiles", file=sys.stderr)
+                if (i + 1) % 50 == 0:
+                    print(f"  ✓ Fetched {i + 1}/{len(symbols)} profiles", file=sys.stderr)
 
             except Exception as e:
                 print(
-                    f"  ⚠️  Warning: Failed to fetch batch {i // batch_size + 1}: {str(e)}",
+                    f"  ⚠️  Warning: Failed to fetch profile for {symbol}: {str(e)}",
                     file=sys.stderr,
                 )
                 continue
@@ -165,11 +160,11 @@ class FMPEarningsCalendar:
 
             # Filter by market cap and exchange
             if profile:
-                market_cap = profile.get("mktCap", 0)
+                market_cap = profile.get("marketCap", 0)
                 if market_cap < self.MIN_MARKET_CAP:
                     continue
 
-                exchange = profile.get("exchangeShortName", "N/A")
+                exchange = profile.get("exchange", "N/A")
 
                 # Filter by US exchanges if us_only is True
                 if self.us_only and exchange not in self.US_EXCHANGES:

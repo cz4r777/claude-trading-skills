@@ -44,17 +44,17 @@ def fetch_economic_calendar(from_date: str, to_date: str, api_key: str) -> list[
         urllib.error.HTTPError: If API request fails
         ValueError: If response is invalid
     """
-    base_url = "https://financialmodelingprep.com/api/v3/economic_calendar"
+    base_url = "https://financialmodelingprep.com/stable/economics-calendar"
 
-    # Build query parameters
-    params = {"from": from_date, "to": to_date}
+    # Build query parameters (stable API uses apikey as query param)
+    params = {"from": from_date, "to": to_date, "apikey": api_key}
 
     # Construct URL with parameters
     url = f"{base_url}?{urllib.parse.urlencode(params)}"
 
     try:
         # Make API request
-        request = urllib.request.Request(url, headers={"apikey": api_key})
+        request = urllib.request.Request(url)
         with urllib.request.urlopen(request) as response:
             if response.status != 200:
                 raise ValueError(f"API returned status code {response.status}")
@@ -68,6 +68,9 @@ def fetch_economic_calendar(from_date: str, to_date: str, api_key: str) -> list[
 
     except urllib.error.HTTPError as e:
         error_body = e.read().decode("utf-8") if e.fp else "No error details"
+        # Stable API returns 404 with [] when no events exist
+        if e.code == 404 and error_body.strip() == "[]":
+            return []
         raise urllib.error.HTTPError(
             e.url, e.code, f"FMP API error: {e.reason}. Details: {error_body}", e.hdrs, e.fp
         )
