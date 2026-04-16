@@ -366,7 +366,7 @@ def fetch_historical_prices_for_hv(symbol, api_key, days=90):
                 historical = historical[:days]
                 historical = historical[::-1]  # Reverse to chronological order
                 return [item["adjClose"] for item in historical]
-        except Exception:
+        except Exception:  # nosec B112 - intentional fallback to next FMP endpoint
             continue
 
     print(f"Error fetching prices for {symbol}: all endpoints failed")

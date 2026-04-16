@@ -63,7 +63,7 @@ def fetch_price_data(ticker: str, start_date: str, end_date: str, api_key: str) 
                         break
             if historical is not None:
                 return {item["date"]: item["close"] for item in historical}
-        except Exception:
+        except Exception:  # nosec B112 - intentional fallback to next FMP endpoint
             continue
 
     print(
