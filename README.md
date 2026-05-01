@@ -1,5 +1,38 @@
 # Claude Trading Skills
 
+######################################################################################
+Updated
+######################################################################################
+Two skills landed in claude-trading-skills/skills/, no proprietary signal logic exposed. Both validated end-to-end against real data.
+
+1. backtest-forensics
+Generic post-hoc analyzer for any completed backtest's equity curve + events log. Smoke-tested against your real options-v1.2 5y JSON — produced clean H1/H2 P/L breakdown with regime tags.
+
+SKILL.md — workflow + when-to-use + interpretation principles
+scripts/period_breakdown.py — H1/H2/quarter/year bucketing with STRONG/loss/DRAWDOWN tags
+scripts/diagnose_period.py — drill-down for flagged periods (gate-on %, exit-reason histogram, win rate)
+references/methodology.md — "model broken vs working as designed" decision tree
+references/event_schema.md — minimal contract for any backtest engine to be forensics-compatible
+What's intentionally NOT in here: nothing about HMM regimes, gate decisions, breakout filters, or any specific signal. Schema is loose — gate_inputs is documented as optional metadata. Your secret sauce stays yours.
+
+2. market-data-fetcher
+Unified fetcher for OHLCV (yfinance), fundamentals (FMP), institutional ownership (FMP + Finviz fallback). Smoke-tested by pulling 30 days of AAPL — returned clean lowercase-column DataFrame.
+
+SKILL.md — when to use + workflow
+scripts/data_cache.py — shared parquet/JSON cache at ~/.market_data_cache/
+scripts/fetch_ohlcv.py — yfinance with retry-on-empty + cache
+scripts/fetch_fundamentals.py — FMP quarterly/annual income + profile
+scripts/fetch_institutional.py — FMP holder count + Finviz ownership-% fallback
+references/source_priority.md, rate_limits.md, output_shapes.md
+
+
+Both fit the existing repo conventions
+SKILL.md frontmatter format matches the other 53 skills
+Directory layout (SKILL.md + scripts/ + references/) mirrors backtest-expert and similar
+
+
+##########################################################################################
+
 Curated Claude skills for equity investors and traders. Each skill bundles prompts, knowledge, and optional helper scripts so Claude can assist with systematic backtesting, market analysis, technical charting, economic calendar monitoring, and US stock research. The repository packages skills for both Claude's web app and Claude Code workflows.
 
 📖 **Documentation site:** <https://tradermonty.github.io/claude-trading-skills/>
